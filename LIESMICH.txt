@@ -1,0 +1,26 @@
+BookmarkHub 2.0.0 - selbst gehosteter Lesezeichen-Manager
+==========================================================
+
+Starten / Aktualisieren:   docker compose up -d --build
+Adresse:                   http://<host>:3131
+Daten:                     ./data  (users.json, bookmarks.json, .session-secret, favicons/)
+Passwort vergessen:        docker exec -it bookmarkhub reset-admin-password
+                           (--random fuer ein Einmal-Passwort, --user NAME fuer andere Benutzer)
+                           oder Datei data/RESET_ADMIN_PASSWORD anlegen und Container neu starten
+                           (Einmal-Passwort steht dann im Container-Log).
+
+Ausfuehrliche Anleitung, Aenderungen und Ideen: ../docs/*.html
+
+Entwicklung:
+  npm install && (cd server && npm install)
+  npm run build && npm start          -> http://localhost:3131
+  npm run dev  (Vite auf :8080, leitet /api an :3131 weiter)
+  npm test     (API-Tests, Node >= 20)
+
+Aufbau:
+  src/       React-Oberflaeche (Vite, Tailwind, shadcn/ui)
+  public/    statische Dateien (Logo, Icons, Manifest)
+  server/    Express-Server: API + Auslieferung der Oberflaeche, Passwort-Reset-Befehl, Tests
+  docker/    Entrypoint und reset-admin-password-Wrapper
+
+(c) Oliver Mandic - https://olivermandic.de
