@@ -23,7 +23,9 @@ COPY server/*.js ./server/
 COPY --from=build /src/dist ./dist
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY docker/reset-admin-password /usr/local/bin/reset-admin-password
-RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/reset-admin-password \
+# Synology shares often hand out files with mode 000 + ACLs; make the app readable for the node user.
+RUN chmod -R u=rwX,go=rX /app/server /app/dist \
+ && chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/reset-admin-password \
  && mkdir -p /app/data && chown node:node /app/data
 VOLUME ["/app/data"]
 EXPOSE 3131
