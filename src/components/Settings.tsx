@@ -79,7 +79,7 @@ function TwoFactor() {
         {enabled ? (<>
           <button className="btn-outline" onClick={() => setStep("regen")}>{t("twofa.newCodes")}</button>
           <button className="btn-outline text-danger" onClick={() => setStep("disable")}>{t("twofa.disable")}</button>
-        </>) : <button className="btn-primary" onClick={() => setStep("password")}>{t("twofa.enable")}</button>}
+        </>) : <button className="btn-primary" data-testid="twofa-enable" onClick={() => setStep("password")}>{t("twofa.enable")}</button>}
       </div>
       {!enabled && user?.isAdmin && <p className="text-sm text-warn mt-3">{t("twofa.adminRecommend")}</p>}
 

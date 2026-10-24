@@ -172,19 +172,24 @@ export function Home({ arrange, onAdd, onEdit, onAddCategory }: { arrange: boole
               {viewBtn("grid", <LayoutGrid size={17} />, t("view.grid"))}{viewBtn("list", <List size={17} />, t("view.list"))}{viewBtn("compact", <Grid3x3 size={17} />, t("view.compact"))}
             </div>
           </div>
-          <div className="flex items-center gap-2 overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0 pb-1 no-scrollbar" data-no-ptr>
-            {(["all", "mine", "shared"] as Filter[]).map((f) => (
-              <button key={f} className={`chip ${filter === f ? "chip-on" : ""}`} aria-pressed={filter === f} onClick={() => setFilter(f)}>{t(`filter.${f}`)}</button>
-            ))}
-            {brokenCount > 0 && <button className={`chip ${filter === "broken" ? "chip-on" : "text-danger"}`} aria-pressed={filter === "broken"} onClick={() => setFilter("broken")}>{t("filter.broken")} · {brokenCount}</button>}
-            <span className="flex-1" />
-            <div className="sm:hidden flex items-center p-0.5 rounded-xl bg-surface-2 border border-line shrink-0" role="group" aria-label={t("view.label")}>
-              {viewBtn("grid", <LayoutGrid size={16} />, t("view.grid"))}{viewBtn("list", <List size={16} />, t("view.list"))}{viewBtn("compact", <Grid3x3 size={16} />, t("view.compact"))}
+          {/* Mobile: chips on row 1 (wrap), view toggle + sort on row 2. sm+: one row. Never scrolls sideways. */}
+          <div className="flex flex-wrap items-center gap-2 min-w-0" data-testid="filter-row">
+            <div className="flex flex-wrap items-center gap-2 min-w-0 w-full sm:w-auto sm:flex-1">
+              {(["all", "mine", "shared"] as Filter[]).map((f) => (
+                <button key={f} className={`chip ${filter === f ? "chip-on" : ""}`} aria-pressed={filter === f} onClick={() => setFilter(f)}>{t(`filter.${f}`)}</button>
+              ))}
+              {brokenCount > 0 && <button className={`chip ${filter === "broken" ? "chip-on" : "text-danger"}`} aria-pressed={filter === "broken"} onClick={() => setFilter("broken")}>{t("filter.broken")} · {brokenCount}</button>}
             </div>
-            <label className="sr-only" htmlFor="sort">{t("sort.label")}</label>
-            <select id="sort" value={sort} onChange={(e) => savePrefs({ sort: e.target.value as any })} className="h-9 rounded-xl border border-line bg-surface px-2.5 text-sm shrink-0">
-              <option value="manual">{t("sort.manual")}</option><option value="title">{t("sort.title")}</option><option value="recent">{t("sort.recent")}</option>
-            </select>
+            <div className="flex items-center gap-2 min-w-0 w-full sm:w-auto">
+              <div className="sm:hidden flex items-center p-0.5 rounded-xl bg-surface-2 border border-line shrink-0" role="group" aria-label={t("view.label")}>
+                {viewBtn("grid", <LayoutGrid size={16} />, t("view.grid"))}{viewBtn("list", <List size={16} />, t("view.list"))}{viewBtn("compact", <Grid3x3 size={16} />, t("view.compact"))}
+              </div>
+              <label className="sr-only" htmlFor="sort">{t("sort.label")}</label>
+              <select id="sort" value={sort} onChange={(e) => savePrefs({ sort: e.target.value as any })} title={t("sort.label")}
+                className="h-9 min-w-0 flex-1 sm:flex-none sm:w-auto sm:max-w-[16rem] truncate rounded-xl border border-line bg-surface ps-2.5 pe-7 text-sm">
+                <option value="manual">{t("sort.manual")}</option><option value="title">{t("sort.title")}</option><option value="recent">{t("sort.recent")}</option>
+              </select>
+            </div>
           </div>
           {arrange && !dndEnabled && <p className="text-sm text-warn">{t("arrange.needsManual")}</p>}
           {arrange && dndEnabled && <p className="text-sm text-muted">{t("arrange.hint")}</p>}

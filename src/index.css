@@ -20,26 +20,33 @@
 
 /* Safe areas: notch, Dynamic Island, home indicator, landscape, Android edge-to-edge. */
 :root {
-  --sat: env(safe-area-inset-top, 0px); --sab: env(safe-area-inset-bottom, 0px);
+  /* --sim-* are only set by the UI tests; --*-fallback by public/theme-init.js (iOS 26 inset bug).
+     max() = never a double inset. */
+  --sat: max(var(--sim-sat, env(safe-area-inset-top, 0px)), var(--sat-fallback, 0px));
+  --sab: max(var(--sim-sab, env(safe-area-inset-bottom, 0px)), var(--sab-fallback, 0px));
   --sal: env(safe-area-inset-left, 0px); --sar: env(safe-area-inset-right, 0px);
   --tl-reserve: 0px; /* iPadOS window controls, set by JS in window mode */
 }
-html, body, #root { height: 100%; }
+/* The document itself never scrolls (iOS ignores overflow:hidden on body for touch scrolling, which
+   let the whole shell slide under the status bar in the Safari tab). Only .scroll-area scrolls. */
+html, body, #root { height: 100%; width: 100%; overflow: hidden; overscroll-behavior: none; }
+html { background: rgb(var(--bar)); }
 body {
   @apply bg-bg text-fg font-sans antialiased;
-  margin: 0; overflow: hidden; overscroll-behavior: none;
+  margin: 0; position: fixed; inset: 0;
   -webkit-tap-highlight-color: transparent; text-rendering: optimizeLegibility;
 }
 /* App shell: opaque status strip (exactly the top inset) + opaque toolbar + own scroll area.
    No translucency, backdrop-filter, text-shadow or filter anywhere in the chrome. */
-.app-shell { display: flex; flex-direction: column; height: 100%; height: 100dvh; }
-.status-strip { flex: none; height: var(--sat); background: rgb(var(--bar)); }
+.app-shell { position: fixed; inset: 0; display: flex; flex-direction: column; overflow: hidden; background: rgb(var(--bg)); }
+.status-strip { flex: none; height: var(--sat); background: rgb(var(--bar)); position: relative; z-index: 40; }
 .toolbar {
-  flex: none; background: rgb(var(--bar)); border-bottom: 1px solid rgb(var(--line));
+  flex: none; position: relative; z-index: 40; background: rgb(var(--bar)); border-bottom: 1px solid rgb(var(--line));
+  -webkit-backdrop-filter: none; backdrop-filter: none; text-shadow: none; filter: none; opacity: 1;
   padding-left: calc(max(var(--sal), 0.75rem) + var(--tl-reserve)); padding-right: max(var(--sar), 0.75rem);
 }
 .scroll-area {
-  flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain;
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain;
   padding-left: var(--sal); padding-right: var(--sar);
 }
 .page-bottom { padding-bottom: calc(var(--sab) + 1rem); }

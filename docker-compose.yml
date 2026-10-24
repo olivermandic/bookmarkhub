@@ -5,7 +5,7 @@
 services:
   bookmarkhub:
     build: .
-    image: bookmarkhub:2.1.0
+    image: bookmarkhub:2.1.1
     container_name: bookmarkhub
     restart: unless-stopped
     ports:

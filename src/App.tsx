@@ -58,13 +58,13 @@ function Main() {
   const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
   const toolbar = (
-    <div className="h-14 flex items-center gap-1.5 sm:gap-2">
+    <div className="h-14 flex items-center gap-1 min-[360px]:gap-1.5 sm:gap-2 min-w-0">
       {route !== "home" ? (
         <button className="icon-btn -ms-1.5" onClick={() => go("home")} aria-label={t("common.back")}><ArrowLeft size={20} className="rtl:rotate-180" /></button>
       ) : null}
       <a href="#" onClick={(e) => { e.preventDefault(); go("home"); }} className="flex items-center gap-2.5 min-w-0 me-auto rounded-lg">
         <img src="logo.png" alt="" width={30} height={30} className="h-[30px] w-[30px] rounded-lg shrink-0" />
-        <span className="font-semibold text-[17px] tracking-tight truncate">BookmarkHub</span>
+        <span className="font-semibold text-[17px] tracking-tight truncate max-[359px]:sr-only">BookmarkHub</span>
       </a>
       <button onClick={() => setPalette(true)} className="hidden md:flex items-center gap-2 h-10 w-64 lg:w-80 px-3 rounded-xl border border-line bg-bg text-muted text-sm hover:border-accent/40" aria-label={t("palette.title")} aria-keyshortcuts={isMac ? "Meta+K" : "Control+K"}>
         <Search size={16} /><span className="flex-1 text-start">{t("palette.placeholder")}</span>
@@ -76,7 +76,7 @@ function Main() {
           {arrange ? <Check size={20} /> : <MoveVertical size={20} />}
         </button>
       )}
-      <button className="btn-primary px-2.5 sm:px-3.5" onClick={() => openAdd()} aria-label={t("bookmark.add")}><Plus size={19} /><span className="hidden sm:inline">{t("bookmark.addShort")}</span></button>
+      <button className="btn-primary shrink-0 px-2.5 sm:px-3.5" onClick={() => openAdd()} aria-label={t("bookmark.add")}><Plus size={19} /><span className="hidden sm:inline">{t("bookmark.addShort")}</span></button>
       <Menu label={t("nav.menu")} trigger={<span className="h-8 w-8 rounded-full bg-surface-2 border border-line flex items-center justify-center text-sm font-semibold uppercase">{Array.from(user?.username || "?")[0]}</span>}>
         {(close) => (<>
           <div className="px-2.5 py-2 text-xs text-muted truncate border-b border-line mb-1">{user?.username}</div>

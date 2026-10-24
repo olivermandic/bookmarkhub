@@ -13,7 +13,7 @@ export function Modal({ open, onClose, title, children, wide, footer }: { open: 
   }, [open]);
   return (
     <dialog ref={ref} onCancel={(e) => { e.preventDefault(); onClose(); }} onClick={(e) => { if (e.target === ref.current) onClose(); }}
-      className={`p-0 m-auto bg-transparent text-fg max-h-[calc(100dvh-var(--sat)-var(--sab)-1.5rem)] w-[calc(100vw-1.5rem-var(--sal)-var(--sar))] ${wide ? "max-w-2xl" : "max-w-lg"}`}>
+      className={`p-0 mx-auto mt-[calc(var(--sat)+0.75rem)] mb-auto sm:my-auto bg-transparent text-fg max-h-[calc(100dvh-var(--sat)-var(--sab)-1.5rem)] w-[calc(100vw-1.5rem-var(--sal)-var(--sar))] ${wide ? "max-w-2xl" : "max-w-lg"}`}>
       {open && (
         <div className="card pop-in flex flex-col max-h-[calc(100dvh-var(--sat)-var(--sab)-1.5rem)]">
           <div className="flex items-center gap-2 px-5 pt-4 pb-3 border-b border-line">
