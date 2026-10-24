@@ -1,21 +1,25 @@
-# BookmarkHub 2
+# BookmarkHub 2.1
 # Start/update:  docker compose up -d --build
-# Data (users.json, bookmarks.json, favicon cache) lives in ./data on the host.
+# Data (users.json, bookmarks.json, categories, favicon cache) lives in ./data on the host.
+# Automatic daily backups go to BACKUP_PATH (default ./backups); set it in a .env file next to this file.
 services:
   bookmarkhub:
     build: .
-    image: bookmarkhub:2.0.1
+    image: bookmarkhub:2.1.0
     container_name: bookmarkhub
     restart: unless-stopped
     ports:
       - "3131:3131"
     volumes:
       - ./data:/app/data
+      - ${BACKUP_PATH:-./backups}:/app/backups
     environment:
       - TZ=Europe/Berlin
       # Optional: Secure cookie flag. "auto" = only when the request arrives via HTTPS
       # (Synology reverse proxy sends X-Forwarded-Proto). Set to "true" to always require HTTPS.
       - COOKIE_SECURE=auto
+      # Optional: serve under a sub path, e.g. /bookmarks (default: /)
+      # - BASE_PATH=/
     security_opt:
       - no-new-privileges:true
     logging:

@@ -3,11 +3,14 @@
 # or files copied from the old version), then runs the app as the unprivileged "node" user.
 set -e
 DATA_DIR="${DATA_DIR:-/app/data}"
+BACKUP_DIR="${BACKUP_DIR:-/app/backups}"
 if [ "$(id -u)" = "0" ]; then
-  mkdir -p "$DATA_DIR"
-  if [ -n "$(find "$DATA_DIR" ! -user node -print -quit 2>/dev/null)" ]; then
-    chown -R node:node "$DATA_DIR"
-  fi
+  for d in "$DATA_DIR" "$BACKUP_DIR"; do
+    mkdir -p "$d"
+    if [ -n "$(find "$d" ! -user node -print -quit 2>/dev/null)" ]; then
+      chown -R node:node "$d"
+    fi
+  done
   exec su-exec node "$@"
 fi
 exec "$@"
