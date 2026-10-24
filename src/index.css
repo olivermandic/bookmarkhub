@@ -1,79 +1,70 @@
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 221.2 83% 53.3%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 262.1 83.3% 57.8%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 221.2 83% 53.3%;
-    --radius: 0.75rem;
-  }
-
-  .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 250 95% 76.9%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 224.3 76.3% 48%;
-  }
+/* Colour tokens (RGB triplets). Dark is truly dark, not grey. */
+:root, .light {
+  --bg: 246 247 249; --surface: 255 255 255; --surface-2: 240 242 245; --line: 226 229 235;
+  --fg: 17 20 28; --muted: 96 104 120; --accent: 37 99 235; --accent-fg: 255 255 255;
+  --danger: 220 38 38; --ok: 22 163 74; --warn: 217 119 6;
+  --bar: 255 255 255;
+  color-scheme: light;
+}
+.dark {
+  --bg: 11 13 18; --surface: 20 23 30; --surface-2: 28 32 41; --line: 39 44 56;
+  --fg: 236 239 244; --muted: 148 157 175; --accent: 96 145 255; --accent-fg: 8 12 24;
+  --danger: 248 113 113; --ok: 74 222 128; --warn: 251 191 36;
+  --bar: 16 19 25;
+  color-scheme: dark;
 }
 
-@layer base {
-  * {
-    @apply border-border;
-  }
-
-  body {
-    @apply bg-background text-foreground;
-  }
-
-  .bookmark-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-    gap: 1.25rem;
-  }
-  
-  .bookmark-card {
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-  }
-  
-  .bookmark-card:hover {
-    transform: translateY(-4px);
-  }
-  
-  .icon-container {
-    @apply flex items-center justify-center w-12 h-12 rounded-md bg-secondary text-primary;
-  }
+/* Safe areas: notch, Dynamic Island, home indicator, landscape, Android edge-to-edge. */
+:root {
+  --sat: env(safe-area-inset-top, 0px); --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px); --sar: env(safe-area-inset-right, 0px);
+  --tl-reserve: 0px; /* iPadOS window controls, set by JS in window mode */
 }
+html, body, #root { height: 100%; }
+body {
+  @apply bg-bg text-fg font-sans antialiased;
+  margin: 0; overflow: hidden; overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent; text-rendering: optimizeLegibility;
+}
+/* App shell: opaque status strip (exactly the top inset) + opaque toolbar + own scroll area.
+   No translucency, backdrop-filter, text-shadow or filter anywhere in the chrome. */
+.app-shell { display: flex; flex-direction: column; height: 100%; height: 100dvh; }
+.status-strip { flex: none; height: var(--sat); background: rgb(var(--bar)); }
+.toolbar {
+  flex: none; background: rgb(var(--bar)); border-bottom: 1px solid rgb(var(--line));
+  padding-left: calc(max(var(--sal), 0.75rem) + var(--tl-reserve)); padding-right: max(var(--sar), 0.75rem);
+}
+.scroll-area {
+  flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain;
+  padding-left: var(--sal); padding-right: var(--sar);
+}
+.page-bottom { padding-bottom: calc(var(--sab) + 1rem); }
+
+:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; border-radius: 6px; }
+::selection { background: rgb(var(--accent) / 0.25); }
+
+@layer components {
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-xl px-3.5 h-10 text-sm font-medium transition-colors select-none disabled:opacity-50 disabled:pointer-events-none whitespace-nowrap; }
+  .btn-primary { @apply btn bg-accent text-accent-fg hover:bg-accent/90; }
+  .btn-ghost { @apply btn hover:bg-surface-2 text-fg; }
+  .btn-outline { @apply btn border border-line bg-surface hover:bg-surface-2; }
+  .btn-danger { @apply btn bg-danger text-white hover:bg-danger/90; }
+  .icon-btn { @apply inline-flex items-center justify-center rounded-xl h-10 w-10 hover:bg-surface-2 text-fg transition-colors shrink-0 disabled:opacity-50; }
+  .input { @apply w-full h-11 rounded-xl border border-line bg-surface px-3.5 text-[15px] text-fg placeholder:text-muted/80 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/25; }
+  .label { @apply block text-sm font-medium mb-1.5; }
+  .card { @apply rounded-2xl border border-line bg-surface shadow-card; }
+  .chip { @apply inline-flex items-center gap-1.5 h-8 px-3 rounded-full text-sm border border-line bg-surface hover:bg-surface-2 whitespace-nowrap; }
+  .chip-on { @apply bg-fg text-bg border-fg hover:bg-fg/90; }
+  .section-title { @apply text-xs font-semibold uppercase tracking-wider text-muted; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+.ptr-spin { animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pop-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+.pop-in { animation: pop-in 0.16s ease-out; }
+dialog::backdrop { background: rgb(0 0 0 / 0.55); }
+.no-scrollbar { scrollbar-width: none; } .no-scrollbar::-webkit-scrollbar { display: none; }
