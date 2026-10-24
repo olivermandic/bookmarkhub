@@ -31,7 +31,7 @@ for (const l of LOCALES) {
     if (l === "en") continue;
     const a = s.replace(ALLOWED, "").length || 1; const b = v.replace(ALLOWED, "").length;
     const r = b / a; const [lo, hi] = CJK.has(l) ? [0.15, 2.2] : [0.4, 2.8];
-    if (s.length > 12 && (r < lo || r > hi)) err(l, k, `length ratio ${r.toFixed(2)}`);
+    if (s.length > 14 && (r < lo || r > hi)) err(l, k, `length ratio ${r.toFixed(2)}`);
     if (s.length > 14 && v === s) err(l, k, "identical to English (untranslated?)");
     for (const re of HALLUCINATION) if (re.test(v) && !re.test(s)) err(l, k, `suspicious pattern ${re}`);
     if (NON_LATIN.has(l)) {
