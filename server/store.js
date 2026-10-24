@@ -9,8 +9,10 @@ const { hashPassword, isHashed } = require('./password');
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, '..', 'data'));
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const BOOKMARKS_FILE = path.join(DATA_DIR, 'bookmarks.json');
+const CATEGORIES_FILE = path.join(DATA_DIR, 'categories.json');
 const SESSION_SECRET_FILE = path.join(DATA_DIR, '.session-secret');
-const SCHEMA_VERSION = 2;
+const META_FILE = path.join(DATA_DIR, 'meta.json');
+const SCHEMA_VERSION = 3; // 2 = BookmarkHub 2.0 (hashed passwords), 3 = 2.1 (categories, 2FA, link/icon status)
 
 function ensureDir() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -37,6 +39,15 @@ const getUsers = () => readJson(USERS_FILE, []);
 const saveUsers = (users) => writeJson(USERS_FILE, users);
 const getBookmarks = () => readJson(BOOKMARKS_FILE, []);
 const saveBookmarks = (b) => writeJson(BOOKMARKS_FILE, b);
+const getCategories = () => readJson(CATEGORIES_FILE, []);
+const saveCategories = (c) => writeJson(CATEGORIES_FILE, c);
+const getMeta = () => readJson(META_FILE, {});
+const saveMeta = (m) => writeJson(META_FILE, m);
+
+// Read-modify-write helpers (synchronous, so no interleaving inside one Node process).
+function updateBookmarks(fn) { const list = getBookmarks(); const r = fn(list); saveBookmarks(list); return r; }
+function updateUsers(fn) { const list = getUsers(); const r = fn(list); saveUsers(list); return r; }
+function updateCategories(fn) { const list = getCategories(); const r = fn(list); saveCategories(list); return r; }
 
 function backup(file, tag) {
   if (!fs.existsSync(file)) return null;
@@ -95,6 +106,21 @@ function migrateBookmarks() {
   return null;
 }
 
+// 2.0 -> 2.1: categories file, per-user preferences, categoryId on bookmarks.
+function migrateV3() {
+  const meta = getMeta();
+  if ((meta.schema || 2) >= 3) return null;
+  const tag = 'pre-v2.1';
+  [USERS_FILE, BOOKMARKS_FILE].forEach((f) => backup(f, tag));
+  const list = getBookmarks().map((b) => ({ ...b, categoryId: b.categoryId || null }));
+  saveBookmarks(list);
+  if (!fs.existsSync(CATEGORIES_FILE)) saveCategories([]);
+  const users = getUsers().map((u) => ({ ...u, prefs: u.prefs && typeof u.prefs === 'object' ? u.prefs : {} }));
+  saveUsers(users);
+  saveMeta({ ...meta, schema: 3, migratedAt: new Date().toISOString() });
+  return `data migrated to schema v3 (categories, preferences; backups *.backup-${tag}-*)`;
+}
+
 function randomPassword(len = 20) {
   // Unambiguous characters only (no 0/O, 1/l/I).
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
@@ -121,6 +147,7 @@ function initIfEmpty(log) {
     log('================================================================');
   }
   if (!fs.existsSync(BOOKMARKS_FILE)) saveBookmarks([]);
+  if (users.length === 0) { saveCategories([]); saveMeta({ schema: SCHEMA_VERSION, createdAt: new Date().toISOString() }); }
 }
 
 function getSessionSecret() {
@@ -136,7 +163,8 @@ function getSessionSecret() {
 }
 
 module.exports = {
-  DATA_DIR, USERS_FILE, BOOKMARKS_FILE, SCHEMA_VERSION,
-  ensureDir, getUsers, saveUsers, getBookmarks, saveBookmarks,
-  migrateUsers, migrateBookmarks, initIfEmpty, getSessionSecret, randomPassword, backup,
+  DATA_DIR, USERS_FILE, BOOKMARKS_FILE, CATEGORIES_FILE, SCHEMA_VERSION,
+  ensureDir, getUsers, saveUsers, getBookmarks, saveBookmarks, getCategories, saveCategories, getMeta, saveMeta,
+  updateBookmarks, updateUsers, updateCategories,
+  migrateUsers, migrateBookmarks, migrateV3, readJson, writeJson, initIfEmpty, getSessionSecret, randomPassword, backup,
 };

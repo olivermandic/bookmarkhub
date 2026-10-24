@@ -8,6 +8,10 @@ const { hashPassword, verifyPassword, DUMMY_HASH, passwordProblem } = require('.
 const { createLimiter } = require('./ratelimit');
 const { applyResetTrigger } = require('./reset');
 const favicons = require('./favicons');
+const linkcheck = require('./linkcheck');
+const backups = require('./backup');
+const totp = require('./totp');
+const QRCode = require('qrcode');
 const pkg = require('./package.json');
 
 const PORT = Number(process.env.PORT || 3131);
@@ -16,12 +20,16 @@ const COOKIE_NAME = 'bmh_session';
 const SESSION_DAYS = Number(process.env.SESSION_DAYS || 30);
 // "auto" = Secure flag when the request came in via HTTPS (reverse proxy sets X-Forwarded-Proto).
 const COOKIE_SECURE = (process.env.COOKIE_SECURE || 'auto').toLowerCase();
+// Install path behind a reverse proxy, e.g. "/bookmarks/". Default "/". Nothing else is hard-coded.
+const BASE_PATH = (`/${(process.env.BASE_PATH || '').replace(/^\/+|\/+$/g, '')}/`).replace('//', '/');
+const BACKGROUND = process.env.BACKGROUND_JOBS !== 'false';
+const BUILD_ID = (() => { try { return fs.statSync(path.join(STATIC_DIR, 'index.html')).mtimeMs.toString(36).slice(0, 6); } catch { return 'dev'; } })();
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
 // ---------- startup: data folder, migration, reset trigger ----------
 store.initIfEmpty(log);
-for (const m of [store.migrateUsers(), store.migrateBookmarks()]) if (m) log(m);
+for (const m of [store.migrateUsers(), store.migrateBookmarks(), store.migrateV3()]) if (m) log(m);
 applyResetTrigger(log);
 const SECRET = store.getSessionSecret();
 
@@ -29,6 +37,7 @@ const SECRET = store.getSessionSecret();
 const publicUser = (u) => ({
   id: u.id, username: u.username, isAdmin: !!u.isAdmin,
   isFirstLogin: !!u.isFirstLogin, mustChangePassword: !!u.mustChangePassword,
+  twoFactorEnabled: !!(u.totp && u.totp.secret), prefs: u.prefs || {},
 });
 
 function sign(payload) {
@@ -56,10 +65,10 @@ function setSessionCookie(req, res, user) {
   const exp = Date.now() + SESSION_DAYS * 864e5;
   const token = sign({ uid: user.id, sv: user.sessionVersion || 1, exp });
   const secure = COOKIE_SECURE === 'true' || (COOKIE_SECURE === 'auto' && req.secure);
-  res.setHeader('Set-Cookie', `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_DAYS * 86400}${secure ? '; Secure' : ''}`);
+  res.setHeader('Set-Cookie', `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=${BASE_PATH}; HttpOnly; SameSite=Strict; Max-Age=${SESSION_DAYS * 86400}${secure ? '; Secure' : ''}`);
 }
 function clearSessionCookie(res) {
-  res.setHeader('Set-Cookie', `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`);
+  res.setHeader('Set-Cookie', `${COOKIE_NAME}=; Path=${BASE_PATH}; HttpOnly; SameSite=Strict; Max-Age=0`);
 }
 const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 function validUrl(v) {
@@ -82,6 +91,15 @@ function cleanBookmarkInput(input, partial) {
     const f = str(input.favicon, 2000);
     // Either an http(s) URL or a short fallback text (emoji/letter).
     out.favicon = validUrl(f) || (f.length <= 8 ? f : '');
+  }
+  if ('iconUrl' in input) {
+    const f = str(input.iconUrl, 2000);
+    out.iconUrl = f ? (validUrl(f) || err('Icon URL must be http(s)')) : '';
+  }
+  if ('categoryId' in input) {
+    const c = input.categoryId ? String(input.categoryId) : null;
+    if (c && !store.getCategories().some((x) => x.id === c)) err('Unknown category');
+    out.categoryId = c;
   }
   return out;
 }
@@ -147,11 +165,43 @@ api.post('/login', (req, res) => {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
   loginLimiter.reset(key);
+  if (user.totp && user.totp.secret) {
+    // Second step required: short-lived signed ticket, no session yet.
+    const ticket = sign({ t: '2fa', uid: user.id, sv: user.sessionVersion || 1, exp: Date.now() + 5 * 60e3 });
+    return res.json({ twoFactorRequired: true, ticket });
+  }
+  finishLogin(req, res, users, user);
+});
+function finishLogin(req, res, users, user) {
   const isFirst = !!user.isFirstLogin;
   user.lastLoginAt = new Date().toISOString();
   store.saveUsers(users);
   setSessionCookie(req, res, user);
   res.json({ ...publicUser(user), isFirstLogin: isFirst });
+}
+const totpLimiter = createLimiter({ max: 5, windowMs: 15 * 60e3 });
+api.post('/login/2fa', (req, res) => {
+  const t = unsign(req.body && req.body.ticket);
+  if (!t || t.t !== '2fa' || t.exp < Date.now()) return res.status(401).json({ error: 'Login expired, please start again' });
+  const key = `2fa|${t.uid}`;
+  const wait = totpLimiter.blockedFor(key);
+  if (wait > 0) { res.setHeader('Retry-After', Math.ceil(wait / 1000)); return res.status(429).json({ error: `Too many failed attempts. Try again in ${Math.ceil(wait / 60000)} min.` }); }
+  const users = store.getUsers();
+  const user = users.find((u) => u.id === t.uid);
+  if (!user || (user.sessionVersion || 1) !== t.sv || !user.totp) return res.status(401).json({ error: 'Login expired, please start again' });
+  const code = String((req.body && req.body.code) || '').trim();
+  let ok = false;
+  if (/^\d{6}$/.test(code.replace(/\s/g, ''))) {
+    const ctr = totp.verify(user.totp.secret, code, { lastCounter: user.totp.lastCounter || -1 });
+    if (ctr >= 0) { user.totp.lastCounter = ctr; ok = true; }
+  } else if (code) {
+    const h = totp.hashCode(code);
+    const idx = (user.totp.recovery || []).indexOf(h);
+    if (idx >= 0) { user.totp.recovery.splice(idx, 1); ok = true; log(`recovery code used by "${user.username}" (${user.totp.recovery.length} left)`); }
+  }
+  if (!ok) { totpLimiter.fail(key); return res.status(401).json({ error: 'Invalid code' }); }
+  totpLimiter.reset(key);
+  finishLogin(req, res, users, user);
 });
 api.post('/logout', (req, res) => { clearSessionCookie(res); res.json({ success: true }); });
 api.get('/me', requireAuth, (req, res) => res.json(publicUser(req.user)));
@@ -177,6 +227,72 @@ api.post('/me/password', requireAuth, (req, res) => {
   store.saveUsers(users);
   setSessionCookie(req, res, u);
   res.json(publicUser(u));
+});
+
+const PREF_KEYS = { view: ['grid', 'list', 'compact'], theme: ['system', 'light', 'dark'], sort: ['manual', 'title', 'recent'] };
+api.put('/me/prefs', requireAuth, (req, res) => {
+  const body = req.body || {};
+  const u = store.updateUsers((users) => {
+    const x = users.find((y) => y.id === req.user.id);
+    const p = { ...(x.prefs || {}) };
+    for (const [k, allowed] of Object.entries(PREF_KEYS)) if (allowed.includes(body[k])) p[k] = body[k];
+    if (typeof body.language === 'string' && /^[a-z]{2}(-[A-Z]{2})?$|^auto$/.test(body.language)) p.language = body.language;
+    if (Array.isArray(body.categoryOrder)) p.categoryOrder = body.categoryOrder.map(String).slice(0, 500);
+    if (body.bookmarkOrder && typeof body.bookmarkOrder === 'object') {
+      const bo = {};
+      for (const [cat, ids] of Object.entries(body.bookmarkOrder).slice(0, 500)) if (Array.isArray(ids)) bo[String(cat).slice(0, 100)] = ids.map(String).slice(0, 5000);
+      p.bookmarkOrder = { ...(p.bookmarkOrder || {}), ...bo };
+    }
+    if (Array.isArray(body.collapsed)) p.collapsed = body.collapsed.map(String).slice(0, 500);
+    x.prefs = p;
+    return x;
+  });
+  res.json(publicUser(u));
+});
+
+// ---- two-factor login (TOTP) ----
+api.post('/me/2fa/setup', requireAuth, async (req, res, next) => {
+  try {
+    if (!verifyPassword(String((req.body && req.body.password) || ''), req.user.passwordHash)) return res.status(400).json({ error: 'Current password is wrong' });
+    const secret = totp.newSecret();
+    store.updateUsers((users) => { users.find((x) => x.id === req.user.id).totpPending = { secret, at: Date.now() }; });
+    const url = totp.otpauthUrl({ secret, account: req.user.username });
+    const qrSvg = await QRCode.toString(url, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }); // generated locally
+    res.json({ secret, otpauthUrl: url, qrSvg });
+  } catch (e) { next(e); }
+});
+api.post('/me/2fa/enable', requireAuth, (req, res) => {
+  const pending = req.user.totpPending;
+  if (!pending || Date.now() - pending.at > 15 * 60e3) return res.status(400).json({ error: 'Setup expired, please start again' });
+  const ctr = totp.verify(pending.secret, req.body && req.body.code);
+  if (ctr < 0) return res.status(400).json({ error: 'Invalid code' });
+  const codes = totp.newRecoveryCodes();
+  const u = store.updateUsers((users) => {
+    const x = users.find((y) => y.id === req.user.id);
+    x.totp = { secret: pending.secret, enabledAt: new Date().toISOString(), lastCounter: ctr, recovery: codes.map(totp.hashCode) };
+    delete x.totpPending;
+    x.sessionVersion = (x.sessionVersion || 1) + 1; // sign out other devices
+    return x;
+  });
+  setSessionCookie(req, res, u);
+  log(`two-factor login enabled for "${u.username}"`);
+  res.json({ ...publicUser(u), recoveryCodes: codes });
+});
+api.post('/me/2fa/disable', requireAuth, (req, res) => {
+  const body = req.body || {};
+  if (!req.user.totp) return res.json(publicUser(req.user));
+  if (!verifyPassword(String(body.password || ''), req.user.passwordHash)) return res.status(400).json({ error: 'Current password is wrong' });
+  if (totp.verify(req.user.totp.secret, body.code) < 0 && !(req.user.totp.recovery || []).includes(totp.hashCode(body.code || ''))) return res.status(400).json({ error: 'Invalid code' });
+  const u = store.updateUsers((users) => { const x = users.find((y) => y.id === req.user.id); delete x.totp; delete x.totpPending; return x; });
+  log(`two-factor login disabled for "${u.username}"`);
+  res.json(publicUser(u));
+});
+api.post('/me/2fa/recovery-codes', requireAuth, (req, res) => {
+  if (!req.user.totp) return res.status(400).json({ error: 'Two-factor login is not enabled' });
+  if (!verifyPassword(String((req.body && req.body.password) || ''), req.user.passwordHash)) return res.status(400).json({ error: 'Current password is wrong' });
+  const codes = totp.newRecoveryCodes();
+  store.updateUsers((users) => { users.find((y) => y.id === req.user.id).totp.recovery = codes.map(totp.hashCode); });
+  res.json({ recoveryCodes: codes });
 });
 
 // ---- users (admin) ----
@@ -216,6 +332,7 @@ api.put('/users/:id', requireAdmin, (req, res) => {
     if (!makeAdmin && u.isAdmin && users.filter((x) => x.isAdmin).length === 1) return res.status(400).json({ error: 'The last admin cannot be demoted' });
     u.isAdmin = makeAdmin;
   }
+  if (body.disable2fa === true && u.totp) { delete u.totp; delete u.totpPending; log(`two-factor login of "${u.username}" disabled by admin "${req.user.username}"`); }
   if (body.password) {
     const problem = passwordProblem(body.password);
     if (problem) return res.status(400).json({ error: problem });
@@ -253,6 +370,7 @@ api.post('/bookmarks', requireAuth, (req, res, next) => {
     list.push(bm);
     store.saveBookmarks(list);
     res.status(201).json(bm);
+    if (BACKGROUND) favicons.refresh(bm, store.DATA_DIR, { log }).then((m) => setIconStatus(bm.id, m)).catch(() => {});
   } catch (e) { next(e); }
 });
 api.put('/bookmarks/:id', requireAuth, (req, res, next) => {
@@ -261,9 +379,12 @@ api.put('/bookmarks/:id', requireAuth, (req, res, next) => {
     const b = list.find((x) => x.id === req.params.id);
     if (!b || !visible(b, req.user)) return res.status(404).json({ error: 'Bookmark not found' });
     if (!canEdit(b, req.user)) return res.status(403).json({ error: 'Not allowed' });
+    const before = { url: b.url, iconUrl: b.iconUrl || '' };
     Object.assign(b, cleanBookmarkInput((req.body && req.body.updates) || {}, true), { updatedAt: new Date().toISOString() });
+    if (b.url !== before.url) delete b.linkStatus;
     store.saveBookmarks(list);
     res.json(b);
+    if (BACKGROUND && (b.url !== before.url || (b.iconUrl || '') !== before.iconUrl)) favicons.refresh(b, store.DATA_DIR, { force: true, log }).then((m) => setIconStatus(b.id, m)).catch(() => {});
   } catch (e) { next(e); }
 });
 api.delete('/bookmarks/:id', requireAuth, (req, res) => {
@@ -272,26 +393,203 @@ api.delete('/bookmarks/:id', requireAuth, (req, res) => {
   if (!b || !visible(b, req.user)) return res.status(404).json({ error: 'Bookmark not found' });
   if (!canEdit(b, req.user)) return res.status(403).json({ error: 'Not allowed' });
   store.saveBookmarks(list.filter((x) => x.id !== b.id));
+  favicons.removeCache(store.DATA_DIR, b.id);
   res.json({ success: true });
 });
 
-// Favicons are fetched by the server and cached in the data folder, so the browser
-// never contacts third-party sites just to show an icon (privacy).
+// ---- categories (shared by the household; order is personal, see /me/prefs) ----
+api.get('/categories', requireAuth, (req, res) => res.json(store.getCategories()));
+api.post('/categories', requireAuth, (req, res) => {
+  const name = str(req.body && req.body.name, 80);
+  if (!name) return res.status(400).json({ error: 'Name is required' });
+  const cat = store.updateCategories((list) => {
+    const existing = list.find((c) => c.name.toLowerCase() === name.toLowerCase());
+    if (existing) return existing;
+    const c = { id: `cat-${crypto.randomUUID()}`, name, createdBy: req.user.id, createdAt: new Date().toISOString() };
+    list.push(c);
+    return c;
+  });
+  res.status(201).json(cat);
+});
+const canEditCat = (c, user) => c.createdBy === user.id || user.isAdmin;
+api.put('/categories/:id', requireAuth, (req, res) => {
+  const name = str(req.body && req.body.name, 80);
+  if (!name) return res.status(400).json({ error: 'Name is required' });
+  const list = store.getCategories();
+  const c = list.find((x) => x.id === req.params.id);
+  if (!c) return res.status(404).json({ error: 'Category not found' });
+  if (!canEditCat(c, req.user)) return res.status(403).json({ error: 'Not allowed' });
+  c.name = name;
+  store.saveCategories(list);
+  res.json(c);
+});
+api.delete('/categories/:id', requireAuth, (req, res) => {
+  const list = store.getCategories();
+  const c = list.find((x) => x.id === req.params.id);
+  if (!c) return res.status(404).json({ error: 'Category not found' });
+  if (!canEditCat(c, req.user)) return res.status(403).json({ error: 'Not allowed' });
+  store.saveCategories(list.filter((x) => x.id !== c.id));
+  // bookmarks of this category become "uncategorised" – nothing is deleted
+  store.updateBookmarks((bms) => bms.forEach((b) => { if (b.categoryId === c.id) b.categoryId = null; }));
+  res.json({ success: true });
+});
+
+// ---- favicons ----
+// Fetched by the server and cached in the data folder, so the browser never contacts
+// third-party sites just to show an icon (privacy).
+function setIconStatus(id, meta) {
+  store.updateBookmarks((list) => {
+    const b = list.find((x) => x.id === id);
+    if (b) { b.iconStatus = meta.status; b.iconVersion = meta.etag ? meta.etag.replace(/"/g, '').slice(0, 8) : null; }
+  });
+}
 api.get('/favicon/:id', requireAuth, async (req, res) => {
   const b = store.getBookmarks().find((x) => x.id === req.params.id);
   if (!b || !visible(b, req.user)) return res.status(404).end();
-  const icon = await favicons.get(b, store.DATA_DIR);
-  if (!icon) return res.status(404).end();
-  res.setHeader('Content-Type', icon.type);
+  let cached = favicons.readCache(store.DATA_DIR, b.id);
+  if (!cached || cached.meta.pageUrl !== (b.iconUrl || b.url) || (!cached.meta.upload && Date.now() - cached.meta.fetchedAt > (cached.meta.type ? 30 : 3) * 864e5)) {
+    const meta = await favicons.refresh(b, store.DATA_DIR, { log });
+    if (b.iconStatus !== meta.status) setIconStatus(b.id, meta);
+    cached = favicons.readCache(store.DATA_DIR, b.id);
+  }
+  if (!cached || !cached.data) return res.status(404).end();
+  const { meta } = cached;
   res.setHeader('Cache-Control', 'private, max-age=86400');
-  res.end(icon.data);
+  if (meta.etag) {
+    res.setHeader('ETag', meta.etag);
+    if (req.headers['if-none-match'] === meta.etag) return res.status(304).end();
+  }
+  res.setHeader('Content-Type', meta.type);
+  if (meta.type === 'image/svg+xml') res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+  res.end(cached.data);
+});
+api.post('/bookmarks/:id/favicon/refresh', requireAuth, async (req, res) => {
+  const b = store.getBookmarks().find((x) => x.id === req.params.id);
+  if (!b || !visible(b, req.user)) return res.status(404).json({ error: 'Bookmark not found' });
+  const meta = await favicons.refresh(b, store.DATA_DIR, { force: true, log });
+  setIconStatus(b.id, meta);
+  res.json({ status: meta.status, iconVersion: meta.etag ? meta.etag.replace(/"/g, '').slice(0, 8) : null, source: meta.source });
+});
+api.post('/bookmarks/:id/favicon', requireAuth, express.json({ limit: '800kb' }), (req, res, next) => {
+  try {
+    const b = store.getBookmarks().find((x) => x.id === req.params.id);
+    if (!b || !visible(b, req.user)) return res.status(404).json({ error: 'Bookmark not found' });
+    if (!canEdit(b, req.user)) return res.status(403).json({ error: 'Not allowed' });
+    const m = String((req.body && req.body.data) || '').match(/^(?:data:[^;,]*;base64,)?([A-Za-z0-9+/=\s]+)$/);
+    if (!m) return res.status(400).json({ error: 'Invalid image data' });
+    const meta = favicons.saveUpload(b, store.DATA_DIR, Buffer.from(m[1], 'base64'));
+    setIconStatus(b.id, meta);
+    res.json({ status: meta.status, iconVersion: meta.etag.replace(/"/g, '').slice(0, 8) });
+  } catch (e) { next(e); }
+});
+api.delete('/bookmarks/:id/favicon', requireAuth, async (req, res) => {
+  const b = store.getBookmarks().find((x) => x.id === req.params.id);
+  if (!b || !visible(b, req.user)) return res.status(404).json({ error: 'Bookmark not found' });
+  if (!canEdit(b, req.user)) return res.status(403).json({ error: 'Not allowed' });
+  favicons.removeCache(store.DATA_DIR, b.id);
+  store.updateBookmarks((list) => { const x = list.find((y) => y.id === b.id); if (x) x.iconUrl = ''; });
+  const meta = await favicons.refresh({ ...b, iconUrl: '' }, store.DATA_DIR, { force: true, log });
+  setIconStatus(b.id, meta);
+  res.json({ status: meta.status, iconVersion: meta.etag ? meta.etag.replace(/"/g, '').slice(0, 8) : null });
 });
 
-// Export own + shared bookmarks as JSON (backup).
+// ---- dead-link check ----
+async function checkBookmark(id) {
+  const b = store.getBookmarks().find((x) => x.id === id);
+  if (!b) return null;
+  const res = linkcheck.merge(b.linkStatus, await linkcheck.checkUrl(b.url));
+  store.updateBookmarks((list) => { const x = list.find((y) => y.id === id); if (x) x.linkStatus = res; });
+  return res;
+}
+api.post('/bookmarks/:id/check', requireAuth, async (req, res) => {
+  const b = store.getBookmarks().find((x) => x.id === req.params.id);
+  if (!b || !visible(b, req.user)) return res.status(404).json({ error: 'Bookmark not found' });
+  res.json(await checkBookmark(b.id));
+});
+
+// ---- background jobs (one of each kind at a time) ----
+const jobs = {};
+function startJob(kind, ids, worker, concurrency) {
+  if (jobs[kind] && jobs[kind].running) return jobs[kind];
+  const job = { kind, running: true, total: ids.length, done: 0, results: {}, startedAt: new Date().toISOString(), finishedAt: null };
+  jobs[kind] = job;
+  linkcheck.pool(ids, concurrency, async (id) => {
+    try { const r = await worker(id); const k = (r && (r.status || r.state)) || 'failed'; job.results[k] = (job.results[k] || 0) + 1; } catch { job.results.failed = (job.results.failed || 0) + 1; }
+    job.done++;
+  }).finally(() => { job.running = false; job.finishedAt = new Date().toISOString(); log(`job ${kind} finished: ${JSON.stringify(job.results)}`); });
+  return job;
+}
+const faviconWorker = async (id) => {
+  const b = store.getBookmarks().find((x) => x.id === id);
+  if (!b) return null;
+  const meta = await favicons.refresh(b, store.DATA_DIR, { force: true, log });
+  setIconStatus(id, meta);
+  return meta;
+};
+api.get('/jobs', requireAuth, (req, res) => res.json(jobs));
+api.post('/admin/favicons/refresh-all', requireAdmin, (req, res) => {
+  res.status(202).json(startJob('favicons', store.getBookmarks().map((b) => b.id), faviconWorker, 4));
+});
+api.post('/admin/links/check-all', requireAdmin, (req, res) => {
+  res.status(202).json(startJob('links', store.getBookmarks().map((b) => b.id), checkBookmark, linkcheck.CONCURRENCY));
+});
+
+// ---- backups (admin) ----
+api.get('/admin/backups', requireAdmin, (req, res) => res.json({ dir: backups.BACKUP_DIR, backups: backups.list() }));
+api.post('/admin/backups', requireAdmin, (req, res, next) => {
+  try { const name = backups.write(true); backups.rotate(); log(`manual backup by "${req.user.username}": ${name}`); res.status(201).json({ name, backups: backups.list() }); } catch (e) { next(e); }
+});
+api.get('/admin/backups/:name', requireAdmin, (req, res) => {
+  const file = backups.filePath(req.params.name);
+  if (!file || !fs.existsSync(file)) return res.status(404).json({ error: 'Not found' });
+  res.setHeader('Content-Type', 'application/gzip');
+  res.setHeader('Content-Disposition', `attachment; filename="${req.params.name}"`);
+  fs.createReadStream(file).pipe(res);
+});
+
+// ---- import (browser bookmark HTML is parsed in the browser; server gets clean items) ----
+const normUrl = (u) => { try { const x = new URL(u); x.hash = ''; return x.toString().replace(/\/$/, '').replace(/^http:/, 'https:').replace('://www.', '://').toLowerCase(); } catch { return null; } };
+api.post('/import', requireAuth, express.json({ limit: '5mb' }), (req, res) => {
+  const items = Array.isArray(req.body && req.body.items) ? req.body.items.slice(0, 5000) : [];
+  const isShared = !!(req.body && req.body.isShared);
+  const existing = new Set(store.getBookmarks().filter((b) => visible(b, req.user)).map((b) => normUrl(b.url)));
+  const catByName = new Map(store.getCategories().map((c) => [c.name.toLowerCase(), c]));
+  const newCats = [];
+  const created = []; let skipped = 0; let invalid = 0;
+  const now = new Date().toISOString();
+  for (const it of items) {
+    let data;
+    try { data = cleanBookmarkInput({ title: it.title || it.url, url: it.url, description: it.description || '', tags: it.tags || [], isShared: 'isShared' in it ? it.isShared : isShared }, false); } catch { invalid++; continue; }
+    const key = normUrl(data.url);
+    if (existing.has(key)) { skipped++; continue; }
+    existing.add(key);
+    let categoryId = null;
+    const cname = str(it.category, 80);
+    if (cname) {
+      let c = catByName.get(cname.toLowerCase());
+      if (!c) { c = { id: `cat-${crypto.randomUUID()}`, name: cname, createdBy: req.user.id, createdAt: now }; catByName.set(cname.toLowerCase(), c); newCats.push(c); }
+      categoryId = c.id;
+    }
+    created.push({ ...data, categoryId, id: `bookmark-${crypto.randomUUID()}`, createdBy: req.user.id, createdAt: it.addDate && !Number.isNaN(Date.parse(it.addDate)) ? new Date(it.addDate).toISOString() : now, updatedAt: now });
+  }
+  if (created.length || newCats.length) {
+    store.backup(store.BOOKMARKS_FILE, 'pre-import');
+    if (newCats.length) store.updateCategories((l) => l.push(...newCats));
+    store.updateBookmarks((l) => l.push(...created));
+  }
+  log(`import by "${req.user.username}": ${created.length} created, ${skipped} duplicates, ${invalid} invalid, ${newCats.length} new categories`);
+  res.json({ created: created.length, skipped, invalid, categoriesCreated: newCats.length });
+});
+
+// Export own + shared bookmarks as JSON (can be imported again).
 api.get('/export', requireAuth, (req, res) => {
-  const list = store.getBookmarks().filter((b) => req.user.isAdmin || visible(b, req.user));
+  const list = store.getBookmarks().filter((b) => visible(b, req.user));
+  const cats = store.getCategories();
   res.setHeader('Content-Disposition', `attachment; filename="bookmarkhub-export-${new Date().toISOString().slice(0, 10)}.json"`);
-  res.json({ exportedAt: new Date().toISOString(), version: pkg.version, bookmarks: list });
+  res.json({
+    app: 'BookmarkHub', exportedAt: new Date().toISOString(), version: pkg.version, categories: cats,
+    bookmarks: list.map(({ linkStatus, iconStatus, iconVersion, ...b }) => ({ ...b, category: (cats.find((c) => c.id === b.categoryId) || {}).name || '' })),
+  });
 });
 
 api.use((req, res) => res.status(404).json({ error: 'Not found' }));
@@ -302,21 +600,52 @@ api.use((err, req, res, next) => {
   log('error:', err.message);
   res.status(500).json({ error: 'Internal error' });
 });
-app.use('/api', api);
+const site = express.Router();
+site.use('/api', api);
 
 // ---------- static frontend ----------
+// index.html gets the install path as <base href>; sw.js gets the release version (cache bump).
+let indexCache = null; let swCache = null;
+function renderIndex() {
+  if (!indexCache) indexCache = fs.readFileSync(path.join(STATIC_DIR, 'index.html'), 'utf8').replace(/<base href="[^"]*"\s*\/?>/, `<base href="${BASE_PATH}" />`);
+  return indexCache;
+}
 if (fs.existsSync(STATIC_DIR)) {
-  app.use(express.static(STATIC_DIR, {
+  site.get('/sw.js', (req, res) => {
+    if (!swCache) swCache = fs.readFileSync(path.join(STATIC_DIR, 'sw.js'), 'utf8').replace(/__BMH_VERSION__/g, `${pkg.version}-${BUILD_ID}`);
+    res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Service-Worker-Allowed', BASE_PATH);
+    res.end(swCache);
+  });
+  site.get(['/', '/index.html'], (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.type('html').send(renderIndex()); });
+  site.use(express.static(STATIC_DIR, {
     index: false,
     setHeaders: (res, file) => {
       if (file.includes(`${path.sep}assets${path.sep}`)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       else res.setHeader('Cache-Control', 'no-cache');
     },
   }));
-  app.get('*', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(STATIC_DIR, 'index.html')); });
+  site.get('*', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.type('html').send(renderIndex()); });
+}
+app.use(BASE_PATH, site);
+
+// ---------- background work: daily backup, weekly link check ----------
+function startBackground() {
+  backups.start(log);
+  if (process.env.LINKCHECK_DISABLED !== 'true') {
+    const run = () => {
+      if (jobs.links && jobs.links.running) return;
+      const dueIds = store.getBookmarks().filter((b) => linkcheck.due(b)).slice(0, 40).map((b) => b.id);
+      if (dueIds.length) startJob('links', dueIds, checkBookmark, linkcheck.CONCURRENCY);
+    };
+    setTimeout(run, 2 * 60e3).unref();
+    setInterval(run, 60 * 60e3).unref();
+  }
 }
 
 if (require.main === module) {
-  app.listen(PORT, () => log(`BookmarkHub ${pkg.version} listening on port ${PORT}, data in ${store.DATA_DIR}`));
+  app.listen(PORT, () => log(`BookmarkHub ${pkg.version} listening on port ${PORT}${BASE_PATH !== '/' ? ` under ${BASE_PATH}` : ''}, data in ${store.DATA_DIR}, backups in ${backups.BACKUP_DIR}`));
+  if (BACKGROUND) startBackground();
 }
 module.exports = app;
