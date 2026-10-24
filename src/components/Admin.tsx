@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Archive, Download, ImageDown, Link2Off, Pencil, Plus, ShieldCheck, Trash2, UserRound } from "lucide-react";
+import { Archive, BellRing, Download, ExternalLink, Globe, ImageDown, Link2Off, Pencil, Plus, ShieldCheck, Trash2, UserRound } from "lucide-react";
 import { api, type Job, type User } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { useStore } from "@/lib/store";
@@ -17,6 +17,7 @@ export function Admin() {
     <div className="mx-auto max-w-4xl px-3 sm:px-6 py-5 sm:py-8 flex flex-col gap-4">
       <h1 className="text-2xl font-semibold tracking-tight px-1">{t("nav.admin")}</h1>
       <Users />
+      <Privacy />
       <Maintenance />
       <Backups />
     </div>
@@ -107,7 +108,7 @@ function useJobs() {
   return { jobs, poll };
 }
 
-function JobRow({ kind, job, icon, label, desc, onStart, summary }: { kind: string; job?: Job; icon: JSX.Element; label: string; desc: string; onStart: () => void; summary: (j: Job) => string }) {
+function JobRow({ kind, job, icon, label, desc, onStart, summary, disabled }: { kind: string; job?: Job; icon: JSX.Element; label: string; desc: string; onStart: () => void; summary: (j: Job) => string; disabled?: boolean }) {
   const { t, lang } = useI18n();
   const pct = job && job.total ? Math.round((job.done / job.total) * 100) : 0;
   return (
@@ -115,7 +116,7 @@ function JobRow({ kind, job, icon, label, desc, onStart, summary }: { kind: stri
       <div className="flex items-start gap-3">
         <span className="h-9 w-9 rounded-xl bg-surface-2 flex items-center justify-center text-muted shrink-0">{icon}</span>
         <div className="flex-1 min-w-0"><div className="font-medium">{label}</div><div className="text-sm text-muted">{desc}</div></div>
-        <button className="btn-outline h-9 shrink-0" disabled={job?.running} onClick={onStart} data-job={kind}>{job?.running ? <Spinner size={15} /> : null}{t("jobs.start")}</button>
+        <button className="btn-outline h-9 shrink-0" disabled={job?.running || disabled} onClick={onStart} data-job={kind}>{job?.running ? <Spinner size={15} /> : null}{t("jobs.start")}</button>
       </div>
       {job && (
         <div className="mt-3 ms-12">
@@ -129,10 +130,62 @@ function JobRow({ kind, job, icon, label, desc, onStart, summary }: { kind: stri
   );
 }
 
+interface AdminSettings { fetchFavicons: boolean; linkCheck: boolean; updateCheck: boolean; updateState?: { checkedAt?: string; latest?: string; url?: string; error?: string } | null }
+
+function Privacy() {
+  const { t, lang } = useI18n();
+  const toast = useToast();
+  const { reloadConfig } = useStore();
+  const [s, setS] = useState<AdminSettings | null>(null);
+  const [busy, setBusy] = useState("");
+  useEffect(() => { api<AdminSettings>("/admin/settings").then(setS).catch(() => {}); }, []);
+  const change = async (key: keyof AdminSettings, value: boolean) => {
+    setBusy(key);
+    try { setS(await api<AdminSettings>("/admin/settings", { method: "PUT", body: JSON.stringify({ [key]: value }) })); await reloadConfig(); }
+    catch (e: any) { toast(e.message, "error"); } finally { setBusy(""); }
+  };
+  const row = (key: "fetchFavicons" | "linkCheck" | "updateCheck", icon: JSX.Element, label: string, desc: string, extra?: React.ReactNode) => (
+    <div className="py-4 first:pt-0 last:pb-0 flex items-start gap-3" data-setting={key}>
+      <span className="h-9 w-9 rounded-xl bg-surface-2 flex items-center justify-center text-muted shrink-0">{icon}</span>
+      <div className="flex-1 min-w-0"><div className="font-medium">{label}</div><div className="text-sm text-muted">{desc}</div>{extra}</div>
+      <div className="shrink-0 pt-1 flex items-center gap-2">{busy === key && <Spinner size={14} />}<Switch checked={!!s?.[key]} onChange={(v) => change(key, v)} label={label} /></div>
+    </div>
+  );
+  if (!s) return null;
+  const st = s.updateState;
+  return (
+    <Card title={t("privacy.title")} desc={t("privacy.desc")} id="privacy">
+      <div className="divide-y divide-line">
+        {row("fetchFavicons", <ImageDown size={18} />, t("privacy.favicons"), t("privacy.faviconsDesc"))}
+        {row("linkCheck", <Globe size={18} />, t("privacy.links"), t("privacy.linksDesc"))}
+        {row("updateCheck", <BellRing size={18} />, t("privacy.update"), t("privacy.updateDesc"),
+          s.updateCheck && st?.checkedAt ? <div className="text-xs text-muted mt-1">{t("privacy.lastCheck", { date: fmtDate(st.checkedAt, lang) })}{st.latest ? <> · <bdi dir="ltr">v{st.latest}</bdi></> : null}{st.error ? <> · <bdi dir="ltr">{st.error}</bdi></> : null}</div> : null)}
+      </div>
+    </Card>
+  );
+}
+
+export function UpdateBanner() {
+  const { t } = useI18n();
+  const { user, config } = useStore();
+  const u = config?.update;
+  const [hidden, setHidden] = useState(() => (u ? localStorage.getItem("bmh.updateDismissed") === u.latest : false));
+  useEffect(() => { if (u) setHidden(localStorage.getItem("bmh.updateDismissed") === u.latest); }, [u?.latest]); // eslint-disable-line
+  if (!user?.isAdmin || !u || hidden) return null;
+  return (
+    <div role="status" data-testid="update-banner" className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-accent/40 bg-accent/10 px-4 py-3 text-sm min-w-0">
+      <BellRing size={16} className="shrink-0 text-accent" />
+      <span className="flex-1 min-w-0">{t("update.available", { version: u.latest })}</span>
+      <a className="inline-flex items-center gap-1 font-medium text-accent hover:underline" href={u.url} target="_blank" rel="noopener noreferrer">{t("update.notes")}<ExternalLink size={14} /></a>
+      <button type="button" className="text-muted hover:text-fg text-xs" onClick={() => { localStorage.setItem("bmh.updateDismissed", u.latest); setHidden(true); }}>{t("common.close")}</button>
+    </div>
+  );
+}
+
 function Maintenance() {
   const { t } = useI18n();
   const toast = useToast();
-  const { refresh, bookmarks } = useStore();
+  const { refresh, bookmarks, config } = useStore();
   const { jobs, poll } = useJobs();
   const [wasRunning, setWasRunning] = useState<Record<string, boolean>>({});
   useEffect(() => {
@@ -144,9 +197,9 @@ function Maintenance() {
   return (
     <Card title={t("jobs.title")}>
       <div className="divide-y divide-line">
-        <JobRow kind="favicons" job={jobs.favicons} icon={<ImageDown size={18} />} label={t("jobs.favicons")} desc={t("jobs.faviconsDesc")} onStart={() => start("/admin/favicons/refresh-all")}
+        <JobRow kind="favicons" job={jobs.favicons} icon={<ImageDown size={18} />} label={t("jobs.favicons")} desc={t("jobs.faviconsDesc")} onStart={() => start("/admin/favicons/refresh-all")} disabled={config?.fetchFavicons === false}
           summary={(j) => t("jobs.faviconsSummary", { found: (j.results.found || 0) + (j.results.custom || 0), fallback: j.results.fallback || 0, failed: (j.results.none || 0) + (j.results.failed || 0) })} />
-        <JobRow kind="links" job={jobs.links} icon={<Link2Off size={18} />} label={t("jobs.links")} desc={t("jobs.linksDesc")} onStart={() => start("/admin/links/check-all")}
+        <JobRow kind="links" job={jobs.links} icon={<Link2Off size={18} />} label={t("jobs.links")} desc={t("jobs.linksDesc")} onStart={() => start("/admin/links/check-all")} disabled={config?.linkCheck === false}
           summary={(j) => t("jobs.linksSummary", { ok: j.results.ok || 0, broken: j.results.broken || 0, unknown: j.results.unknown || 0 })} />
       </div>
       {broken.length > 0 && (

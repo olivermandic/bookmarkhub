@@ -1,0 +1,79 @@
+BookmarkHub - Changelog
+=======================
+
+2.2.0 - 2026-10-24
+  New
+  - Share a bookmark with chosen people only: "Visible to" offers Only me /
+    Everyone / Chosen people. Owner and admins pick the users; others do not
+    see the bookmark in any filter. Existing bookmarks keep their visibility.
+    When a user is deleted, they are removed from the lists; a list that
+    becomes empty makes the bookmark private (never "everyone").
+  - Admin -> External requests: separate switches for favicon fetching and
+    the link check (default on). Off = no outgoing request; letter avatars
+    instead of fetched icons. Env FAVICON_FETCH / LINKCHECK_DISABLED set the
+    starting values.
+  - Opt-in update notice for admins (default off, or UPDATE_CHECK=true): the
+    server asks the GitHub releases API at most once a day, sends no user
+    data and shows a banner with a link to the release notes.
+  - Prebuilt multi-arch images on ghcr.io, docker-compose.yml with
+    pull_policy always, .env.example, docker-compose.dev.yml for local builds.
+  - License: PolyForm Noncommercial 1.0.0.
+  Tests: share visibility, user deletion, admin switches, update check
+  (offline fake server), UI overflow of the new dialog parts.
+
+2.1.1 - 2026-10-24
+  Fixed
+  - iPhone Safari tab: the whole page could scroll, the header slid under the
+    status bar and the filter row was cut off. The app shell is now fixed,
+    the status strip and toolbar are opaque, with a fallback for iOS builds
+    that report a safe-area inset of 0.
+  - Filter row on phones in two rows, no horizontal overflow at 320-430 px;
+    header fits at 320 px; dialogs start below the status bar.
+  Tests: WebKit iPhone emulation (DPR 3) for Safari tab and home-screen app
+  with insets 47/59/62 px, overflow at 320/375/390/430 px in de/en/ar/ja,
+  iPad and Android.
+
+2.1.0 - 2026-10-24
+  New
+  - Automatic daily backups (14 daily + 8 weekly), "Backup now" and download
+  - Import from browser bookmark files and JSON with preview and duplicate
+    detection; folders become categories
+  - Two-factor sign-in (TOTP) with recovery codes; reset tool can disable 2FA
+  - Categories with drag and drop (mouse, touch, keyboard)
+  - Weekly link check with "Broken" filter
+  - More reliable favicons fetched by the server itself (HTML icons,
+    manifest, apple-touch-icon, /favicon.ico), upload or icon URL per bookmark
+  - New UI: light/dark, mobile first, grid/list/compact, Cmd/Ctrl+K palette
+  - 33 languages with right-to-left support; build fails on broken
+    translations
+  - PWA: offline shell, versioned service worker cache, pull to refresh,
+    safe areas
+  - BASE_PATH for running under a sub path
+  Changed
+  - Data format version 3, migrated automatically with backup copies
+
+2.0.1 - 2026-10-24
+  Fixed
+  - Start failed with EACCES on Synology shares (files with mode 000); the
+    image now sets the permissions itself.
+
+2.0.0 - 2026-10-24
+  New
+  - Reset a forgotten admin password: reset-admin-password in the container
+    or the trigger file data/RESET_ADMIN_PASSWORD
+  - Change your own password; forced change after a reset
+  - JSON export, light/dark following the system, web app manifest
+  - First start creates the admin with a random password (printed once to
+    the log) instead of default credentials
+  Security
+  - API now requires sign-in (HttpOnly session cookie), admin routes for
+    admins only, private bookmarks only for their owner
+  - scrypt password hashes (automatic migration), sign-in rate limiting,
+    CSRF protection, security headers with Content-Security-Policy, input
+    validation (http/https links only)
+  Privacy
+  - Removed third-party scripts and assets; favicons are fetched and cached
+    by the server; robots.txt and noindex
+  Technical
+  - One container (Node/Express serves API and UI), unprivileged user,
+    healthcheck, atomic writes, automated tests

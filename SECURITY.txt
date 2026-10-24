@@ -1,0 +1,29 @@
+BookmarkHub - Security policy
+=============================
+
+Supported versions
+  Only the latest release receives fixes. Update with
+  docker compose pull && docker compose up -d
+
+Reporting a vulnerability
+  Please do not open a public issue. Use GitHub's private vulnerability
+  reporting ("Security" tab -> "Report a vulnerability") at
+  https://github.com/olivermandic/bookmarkhub/security
+  Include the version (shown at /healthz), steps to reproduce and the impact.
+  You will get an answer as soon as possible; please allow time for a fix
+  before publishing details.
+
+What BookmarkHub does to protect your data
+  - Passwords stored as scrypt hashes; optional TOTP two-factor sign-in
+  - HttpOnly, SameSite=Strict session cookie; CSRF header check;
+    Content-Security-Policy and other security headers
+  - Sign-in rate limiting (5 attempts per 15 minutes)
+  - Runs as an unprivileged user with no-new-privileges
+  - No third-party requests from the browser; outgoing server requests can be
+    switched off by an admin (see README, Privacy)
+
+Hardening tips
+  - Publish it only through a reverse proxy with HTTPS, or keep it in your
+    LAN/VPN
+  - Enable two-factor sign-in for admin accounts
+  - Back up the data folder and the backup folder

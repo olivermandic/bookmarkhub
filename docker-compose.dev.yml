@@ -1,0 +1,35 @@
+# BookmarkHub - build the image yourself from this source folder
+# Start / update after changing the code:  docker compose -f docker-compose.dev.yml up -d --build
+services:
+  bookmarkhub:
+    build:
+      context: .
+      args:
+        VERSION: "2.2.0"
+        REVISION: "local"
+    image: bookmarkhub:2.2.0
+    container_name: bookmarkhub
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3131}:3131"
+    volumes:
+      - ./data:/app/data
+      - ${BACKUP_PATH:-./backups}:/app/backups
+    environment:
+      - TZ=${TZ:-Europe/Berlin}
+      # "auto" = Secure cookie only when the request arrives via HTTPS (reverse proxy sends X-Forwarded-Proto)
+      - COOKIE_SECURE=${COOKIE_SECURE:-auto}
+      - BASE_PATH=${BASE_PATH:-/}
+      # Starting values only - admins can change them later under Admin -> External requests
+      - FAVICON_FETCH=${FAVICON_FETCH:-true}
+      - LINKCHECK_DISABLED=${LINKCHECK_DISABLED:-false}
+      - UPDATE_CHECK=${UPDATE_CHECK:-false}
+      - BACKUP_KEEP_DAILY=${BACKUP_KEEP_DAILY:-14}
+      - BACKUP_KEEP_WEEKLY=${BACKUP_KEEP_WEEKLY:-8}
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "3"

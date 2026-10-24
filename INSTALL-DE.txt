@@ -1,0 +1,166 @@
+BookmarkHub - Installation und Betrieb (Deutsch)
+================================================
+
+BookmarkHub ist ein selbst gehosteter Lesezeichen-Manager fuer Familie und
+kleine Teams. Er laeuft als ein einziger Docker-Container.
+
+  Image:   ghcr.io/olivermandic/bookmarkhub   (amd64 und arm64)
+  Lizenz:  PolyForm Noncommercial 1.0.0 (private/nicht-kommerzielle Nutzung)
+
+
+1. Installation mit Docker Compose
+----------------------------------
+  mkdir bookmarkhub && cd bookmarkhub
+  curl -O https://raw.githubusercontent.com/olivermandic/bookmarkhub/main/docker-compose.yml
+  curl -o .env https://raw.githubusercontent.com/olivermandic/bookmarkhub/main/.env.example
+  (.env bei Bedarf anpassen: Port, Zeitzone, Sicherungsordner ...)
+  docker compose up -d
+
+Danach im Browser: http://<server>:3131
+
+
+2. Erster Start: Admin-Passwort
+-------------------------------
+Beim allerersten Start (leerer data-Ordner) legt BookmarkHub den Benutzer
+"admin" mit einem ZUFALLS-Passwort an. Es steht genau einmal im Container-Log:
+
+  docker logs bookmarkhub
+
+Suche nach "Initial password". Mit admin + diesem Passwort anmelden; die App
+verlangt sofort ein eigenes Passwort. Es gibt keine Standard-Zugangsdaten.
+
+
+3. Update
+---------
+  cd bookmarkhub
+  docker compose pull && docker compose up -d
+
+docker-compose.yml nutzt "latest" mit pull_policy: always. Eine feste
+Version waehlt man in .env, z. B. BOOKMARKHUB_VERSION=2.2.0 (zurueck auf eine
+aeltere Version: dort die alte Nummer eintragen und erneut "up -d").
+Vor jedem Update ist eine Sicherung sinnvoll (Abschnitt 6). Die Daten werden
+beim Update automatisch umgestellt; vorher legt die App Kopien an.
+
+Admins koennen in der Verwaltung den Update-Hinweis einschalten (Abschnitt 7),
+dann erscheint ein Banner, sobald eine neue Version veroeffentlicht ist.
+
+
+4. Synology (Container Manager)
+-------------------------------
+  a) In File Station einen Ordner anlegen, z. B. /docker/bookmarkhub,
+     darin die Unterordner "data" und "backups".
+  b) docker-compose.yml und .env (aus .env.example) in diesen Ordner legen.
+  c) Container Manager -> Projekt -> Erstellen -> Pfad: /docker/bookmarkhub,
+     "Vorhandene docker-compose.yml verwenden" -> Fertig.
+  d) Admin-Passwort: Container Manager -> Container -> bookmarkhub ->
+     Details -> Protokoll ("Initial password").
+  e) HTTPS: Systemsteuerung -> Anmeldeportal -> Erweitert -> Reverse Proxy:
+     https://lesezeichen.example.de -> http://localhost:3131
+     (COOKIE_SECURE=auto erkennt HTTPS automatisch).
+  Update: Projekt -> bookmarkhub -> Aktion -> Erstellen (zieht das neue
+  Image), oder per SSH: cd /volume1/docker/bookmarkhub &&
+  sudo docker compose pull && sudo docker compose up -d
+
+
+5. Portainer
+------------
+  Stacks -> Add stack -> Web editor: Inhalt von docker-compose.yml einfuegen.
+  Die Pfade ./data und ./backups durch absolute Pfade ersetzen, z. B.
+  /opt/bookmarkhub/data. Variablen aus .env.example unten unter
+  "Environment variables" eintragen (oder Standardwerte lassen) -> Deploy.
+  Update: Stack -> "Pull and redeploy" (bzw. "Update the stack" mit
+  "Re-pull image").
+  Admin-Passwort: Containers -> bookmarkhub -> Logs.
+
+
+6. Sicherung
+------------
+- Automatisch: beim Start und taeglich eine Sicherung (.json.gz) in den
+  Ordner BACKUP_PATH (Standard ./backups); aufbewahrt werden 14 Tages- und
+  8 Wochensicherungen. In der App: Verwaltung -> Sicherungen ("Backup jetzt",
+  Download).
+- Komplett: den Ordner data (Benutzer, Lesezeichen, Kategorien, Einstellungen,
+  Icon-Cache, Sitzungsschluessel) und den Sicherungsordner mitsichern, z. B.
+  per Hyper Backup / restic / rsync.
+- Wiederherstellen einzelner Lesezeichen: Einstellungen -> Import -> die
+  .json.gz-Sicherung entpacken und die JSON-Datei importieren (Duplikate
+  werden erkannt).
+
+
+7. Datenschutz
+--------------
+Der Browser laedt ausschliesslich Dateien von der eigenen BookmarkHub-Adresse:
+keine CDNs, keine fremden Schriften, keine Statistik/Tracker, keine Cookies
+ausser dem Anmelde-Cookie.
+
+Der SERVER stellt nur diese ausgehenden Anfragen - jede ist unter
+Verwaltung -> Externe Abrufe einzeln abschaltbar:
+
+  Icons von Websites laden (Standard: an)
+    Der Server ruft die Website des jeweiligen Lesezeichens auf (Startseite,
+    /favicon.ico, Web-Manifest), um das Symbol zu laden und lokal zu
+    speichern. Kein Google-/DuckDuckGo-Dienst, keine Cookies/Zugangsdaten.
+    Aus: kein Abruf mehr, neue Lesezeichen zeigen einen Buchstaben; bereits
+    gespeicherte und hochgeladene Icons bleiben sichtbar.
+
+  Links pruefen (Standard: an)
+    Etwa einmal pro Woche ruft der Server die Lesezeichen-URL auf (erst HEAD,
+    sonst GET, nur die ersten Bytes), um defekte Links zu markieren.
+    Aus: keine Pruefung.
+
+  Update-Hinweis (Standard: AUS, Opt-in)
+    Nur wenn ein Admin ihn einschaltet (oder UPDATE_CHECK=true): hoechstens
+    einmal in 24 Stunden fragt der Server
+    https://api.github.com/repos/olivermandic/bookmarkhub/releases/latest
+    nach der neuesten Version. Gesendet wird nur ein festes Kennzeichen
+    (User-Agent "BookmarkHub-update-check") - keine Benutzer, keine
+    Lesezeichen, keine Installations-ID, keine Cookies. GitHub sieht dabei
+    die IP-Adresse des Servers. Admins sehen dann einen Hinweis mit Link zu
+    den Release-Notes. Es wird NICHTS automatisch aktualisiert.
+
+FAVICON_FETCH, LINKCHECK_DISABLED und UPDATE_CHECK in .env legen nur den
+Anfangswert fest; sobald ein Admin einen Schalter umlegt, gilt der in
+data/settings.json gespeicherte Wert.
+
+
+8. Admin-Passwort vergessen
+---------------------------
+  docker exec -it bookmarkhub reset-admin-password            # fragt neues Passwort ab
+  docker exec -it bookmarkhub reset-admin-password --random   # gibt Einmal-Passwort aus
+  docker exec -it bookmarkhub reset-admin-password --user NAME   # anderer Benutzer
+  docker exec -it bookmarkhub reset-admin-password --disable-2fa --keep-password   # nur 2FA aus
+
+(Auf Synology per SSH mit "sudo" davor. Im Container gibt es nur sh.)
+
+Ohne Terminal: im Ordner data eine leere Datei RESET_ADMIN_PASSWORD anlegen
+und den Container neu starten. Das Einmal-Passwort steht dann im
+Container-Log (docker logs bookmarkhub); die Datei wird danach geloescht.
+Nach der Anmeldung verlangt die App ein neues Passwort.
+
+
+9. Lesezeichen teilen
+---------------------
+Im Lesezeichen-Dialog unter "Sichtbar fuer": Nur ich / Alle / Ausgewaehlte
+Personen. Ausgewaehlte Lesezeichen sehen nur die angehakten Benutzer und der
+Ersteller. Aendern koennen sie der Ersteller und Admins.
+
+
+10. Einstellungen (.env)
+------------------------
+  BOOKMARKHUB_VERSION  latest         Image-Version (z. B. 2.2.0)
+  PORT                 3131           Port auf dem Server
+  TZ                   Europe/Berlin  Zeitzone
+  BACKUP_PATH          ./backups      Ordner fuer die Sicherungen
+  BACKUP_KEEP_DAILY    14             Tagessicherungen
+  BACKUP_KEEP_WEEKLY   8              Wochensicherungen
+  COOKIE_SECURE        auto           auto | true | false
+  BASE_PATH            /              Unterpfad, z. B. /lesezeichen
+  FAVICON_FETCH        true           Anfangswert "Icons laden"
+  LINKCHECK_DISABLED   false          Anfangswert "Links pruefen" (true = aus)
+  UPDATE_CHECK         false          Anfangswert "Update-Hinweis"
+
+Selbst bauen statt fertiges Image:
+  docker compose -f docker-compose.dev.yml up -d --build
+
+
+Required Notice: Copyright (c) Oliver Mandić (olivermandic.de)

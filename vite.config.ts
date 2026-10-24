@@ -8,7 +8,7 @@ export default defineConfig({
   base: "./",
   server: { host: "::", port: 8080, proxy: { "/api": "http://localhost:3131" } },
   plugins: [react()],
-  define: { __APP_VERSION__: JSON.stringify(process.env.npm_package_version || "2.1.0") },
+  define: { __APP_VERSION__: JSON.stringify(process.env.npm_package_version || "2.2.0") },
   resolve: { alias: { "@": path.resolve(__dirname, "./src") } },
   build: { chunkSizeWarningLimit: 700 },
 });

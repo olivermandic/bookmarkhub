@@ -39,9 +39,14 @@ export interface Prefs {
 }
 export interface LinkStatus { state: "ok" | "broken" | "unknown"; code?: number; error?: string; checkedAt?: string; fails?: number }
 export interface Bookmark {
-  id: string; title: string; url: string; description?: string; tags: string[]; isShared: boolean; createdBy: string;
+  id: string; title: string; url: string; description?: string; tags: string[]; isShared: boolean; sharedWith?: string[]; createdBy: string;
   createdAt: string; updatedAt: string; categoryId?: string | null; iconUrl?: string; favicon?: string;
   iconStatus?: "found" | "fallback" | "custom" | "none"; iconVersion?: string | null; linkStatus?: LinkStatus;
+}
+export interface Person { id: string; username: string }
+export interface AppConfig {
+  version: string; fetchFavicons: boolean; linkCheck: boolean; updateCheck?: boolean;
+  update?: { latest: string; url: string; checkedAt: string } | null;
 }
 export interface Category { id: string; name: string; createdBy: string; createdAt: string }
 export interface Job { kind: string; running: boolean; total: number; done: number; results: Record<string, number>; startedAt: string; finishedAt: string | null }

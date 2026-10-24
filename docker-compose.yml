@@ -1,25 +1,30 @@
-# BookmarkHub 2.1
-# Start/update:  docker compose up -d --build
-# Data (users.json, bookmarks.json, categories, favicon cache) lives in ./data on the host.
-# Automatic daily backups go to BACKUP_PATH (default ./backups); set it in a .env file next to this file.
+# BookmarkHub - prebuilt image from GitHub Container Registry (amd64 + arm64)
+# Install / update:  docker compose pull && docker compose up -d
+# Settings: copy .env.example to .env and adjust. Data lives in ./data, daily backups in BACKUP_PATH.
+# First start: the random admin password is printed once -> docker logs bookmarkhub
+# Pin a version instead of "latest" with BOOKMARKHUB_VERSION=2.2.0 in .env.
 services:
   bookmarkhub:
-    build: .
-    image: bookmarkhub:2.1.1
+    image: ghcr.io/olivermandic/bookmarkhub:${BOOKMARKHUB_VERSION:-latest}
+    pull_policy: always
     container_name: bookmarkhub
     restart: unless-stopped
     ports:
-      - "3131:3131"
+      - "${PORT:-3131}:3131"
     volumes:
       - ./data:/app/data
       - ${BACKUP_PATH:-./backups}:/app/backups
     environment:
-      - TZ=Europe/Berlin
-      # Optional: Secure cookie flag. "auto" = only when the request arrives via HTTPS
-      # (Synology reverse proxy sends X-Forwarded-Proto). Set to "true" to always require HTTPS.
-      - COOKIE_SECURE=auto
-      # Optional: serve under a sub path, e.g. /bookmarks (default: /)
-      # - BASE_PATH=/
+      - TZ=${TZ:-Europe/Berlin}
+      # "auto" = Secure cookie only when the request arrives via HTTPS (reverse proxy sends X-Forwarded-Proto)
+      - COOKIE_SECURE=${COOKIE_SECURE:-auto}
+      - BASE_PATH=${BASE_PATH:-/}
+      # Starting values only - admins can change them later under Admin -> External requests
+      - FAVICON_FETCH=${FAVICON_FETCH:-true}
+      - LINKCHECK_DISABLED=${LINKCHECK_DISABLED:-false}
+      - UPDATE_CHECK=${UPDATE_CHECK:-false}
+      - BACKUP_KEEP_DAILY=${BACKUP_KEEP_DAILY:-14}
+      - BACKUP_KEEP_WEEKLY=${BACKUP_KEEP_WEEKLY:-8}
     security_opt:
       - no-new-privileges:true
     logging:

@@ -1,0 +1,111 @@
+BookmarkHub
+===========
+
+Self-hosted bookmark manager for families and small teams. One small Docker
+container, no database server, no external services, no tracking.
+
+  Image:    ghcr.io/olivermandic/bookmarkhub  (linux/amd64, linux/arm64)
+  License:  PolyForm Noncommercial 1.0.0 - free for personal and other
+            noncommercial use, see LICENSE
+  German install guide: INSTALL-DE.txt
+
+
+Features
+--------
+- Bookmarks with title, description, tags and categories (drag and drop with
+  mouse, touch and keyboard); grid, list and compact views; Cmd/Ctrl+K palette
+- Several users; every bookmark is private, shared with everyone, or shared
+  with chosen people only
+- Import from browser bookmark files (Chrome, Edge, Firefox, Safari) and JSON,
+  with preview and duplicate detection; JSON export
+- Two-factor sign-in (TOTP, QR code generated locally) with recovery codes
+- Automatic daily backups (14 daily + 8 weekly) to a folder of your choice
+- Favicons fetched and cached by the server (no Google/DuckDuckGo service),
+  weekly dead-link check - both can be switched off by an admin
+- Installable web app (PWA) for iPhone, iPad, Android and desktop; light and
+  dark mode; 33 languages including right-to-left
+- Forgotten admin password: reset from the container shell
+
+
+Quick start
+-----------
+  mkdir bookmarkhub && cd bookmarkhub
+  curl -O https://raw.githubusercontent.com/olivermandic/bookmarkhub/main/docker-compose.yml
+  curl -o .env https://raw.githubusercontent.com/olivermandic/bookmarkhub/main/.env.example
+  docker compose up -d
+  docker logs bookmarkhub        # shows the random admin password once
+
+Open http://<host>:3131, sign in as "admin" with that password and set your
+own. Put it behind your reverse proxy for HTTPS.
+
+Update:
+  docker compose pull && docker compose up -d
+
+Data lives in ./data (back it up together with the backup folder).
+
+
+Forgotten admin password
+------------------------
+  docker exec -it bookmarkhub reset-admin-password            # asks for a new one
+  docker exec -it bookmarkhub reset-admin-password --random   # prints a one-time password
+  docker exec -it bookmarkhub reset-admin-password --user NAME
+  docker exec -it bookmarkhub reset-admin-password --disable-2fa --keep-password
+
+Without a shell: create an empty file data/RESET_ADMIN_PASSWORD and restart
+the container; the one-time password is printed to the container log.
+
+
+Settings (.env)
+---------------
+  BOOKMARKHUB_VERSION   latest       image tag, e.g. 2.2.0 to pin a version
+  PORT                  3131         port on the host
+  TZ                    Europe/Berlin
+  BACKUP_PATH           ./backups    folder for the automatic backups
+  BACKUP_KEEP_DAILY     14
+  BACKUP_KEEP_WEEKLY    8
+  COOKIE_SECURE         auto         auto | true | false
+  BASE_PATH             /            run under a sub path, e.g. /bookmarks
+  FAVICON_FETCH         true         starting value of the admin switch
+  LINKCHECK_DISABLED    false        starting value of the admin switch
+  UPDATE_CHECK          false        opt-in update notice (see Privacy)
+
+
+Privacy
+-------
+The browser only loads files from your own BookmarkHub address: no CDNs, no
+web fonts from third parties, no analytics, no cookies except the sign-in
+cookie. The server itself makes only these outgoing requests:
+
+- Favicons (default on): the website of the bookmark itself (home page,
+  /favicon.ico, web manifest). No cookies or credentials are sent.
+- Link check (default on): the bookmark URL, about once a week.
+- Update notice (default OFF): when an admin switches it on, the server asks
+  https://api.github.com/repos/olivermandic/bookmarkhub/releases/latest at
+  most once a day. Only a fixed User-Agent "BookmarkHub-update-check" is sent -
+  no user data, no bookmarks, no installation ID. GitHub sees the IP address
+  of your server. Admins then see a banner with a link to the release notes.
+  Nothing is updated automatically.
+
+Each of the three can be switched off separately under Admin -> External
+requests. With favicon fetching off, new bookmarks show a letter avatar;
+uploaded icons keep working.
+
+
+Development
+-----------
+  npm install && (cd server && npm install)
+  npm run build && npm start          # http://localhost:3131
+  npm run dev                         # Vite on :8080, proxies /api to :3131
+  npm test                            # server tests (Node >= 20)
+  tests/ui-test.mjs                   # Playwright UI test (iPhone WebKit, overflow, RTL, GDPR)
+  docker compose -f docker-compose.dev.yml up -d --build   # build the image locally
+
+Layout: src/ React UI (Vite, Tailwind), src/i18n/ translations, server/
+Express API, docker/ entrypoint and reset tool.
+
+Releases: pushing a tag vX.Y.Z builds and publishes the multi-arch image
+(.github/workflows/publish-image.yml). Changes: CHANGELOG.txt.
+Security issues: see SECURITY.txt.
+
+
+Required Notice: Copyright (c) Oliver Mandić (olivermandic.de)

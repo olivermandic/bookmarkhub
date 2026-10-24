@@ -18,7 +18,20 @@ async function login(page) {
   await page.keyboard.press("Enter"); await page.waitForSelector(".toolbar", { timeout: 10000 });
 }
 let storageState;
-{ const b = await chromium.launch(); const ctx = await b.newContext(); const p = await ctx.newPage(); await login(p); storageState = await ctx.storageState(); await b.close(); }
+{
+  const b = await chromium.launch(); const ctx = await b.newContext(); const p = await ctx.newPage(); await login(p); storageState = await ctx.storageState();
+  // 2.2 test data: a user with a long name (share picker), a bookmark shared with chosen people and - if the test server
+  // runs with UPDATE_API_URL pointing to a local fake - the update notice switched on (banner on every page).
+  await p.evaluate(async (fake) => {
+    const h = { "Content-Type": "application/json", "X-Requested-With": "bookmarkhub" };
+    await fetch("api/users", { method: "POST", headers: h, body: JSON.stringify({ username: "maximiliane.schneider-wolfenstein", password: "Long-Name-Test-2026" }) });
+    const ppl = await (await fetch("api/users/directory")).json(); const ids = ppl.filter((u) => u.username !== "admin").map((u) => u.id);
+    const bms = await (await fetch("api/bookmarks")).json();
+    if (!bms.some((x) => x.title === "Geteilt mit Auswahl")) await fetch("api/bookmarks", { method: "POST", headers: h, body: JSON.stringify({ bookmark: { title: "Geteilt mit Auswahl", url: "https://example.com/auswahl", isShared: true, sharedWith: ids } }) });
+    if (fake) await fetch("api/admin/settings", { method: "PUT", headers: h, body: JSON.stringify({ updateCheck: true }) });
+  }, !!process.env.UPDATE_FAKE);
+  await b.close();
+}
 
 function initScript({ sat, sab, standalone, lang, theme }) {
   return `(() => {
@@ -139,6 +152,7 @@ async function overflowRun(browserType, ctxOpts, label, langs, deep) {
     const tag = `${label} ${lang}`; const isPhone = /iPhone|Android/.test(label);
     await page.goto(URL); await page.waitForSelector('[data-testid="filter-row"]'); await page.waitForTimeout(500);
     await noOverflow(page, `${tag} home: no horizontal overflow`);
+    if (process.env.UPDATE_FAKE) ok(`${tag} update banner shown`, (await page.locator('[data-testid="update-banner"]').count()) === 1);
     const hdr = await page.evaluate(() => { const items = [...document.querySelectorAll('[data-testid="toolbar"] > div > *')].filter((e) => e.getBoundingClientRect().width > 1).map((e) => e.getBoundingClientRect()); for (let i = 1; i < items.length; i++) if ((document.dir === "rtl" ? items[i - 1].left < items[i].right - 0.5 : items[i].left < items[i - 1].right - 0.5)) return false; return true; });
     ok(`${tag} header items don't overlap`, hdr);
     if (isPhone) {
@@ -151,10 +165,20 @@ async function overflowRun(browserType, ctxOpts, label, langs, deep) {
       await page.keyboard.press("Escape"); await page.mouse.click(5, 400); await page.waitForTimeout(150);
       await page.locator('[data-testid="toolbar"] .btn-primary').click(); await page.waitForSelector("dialog[open]"); await page.waitForTimeout(300);
       await noOverflow(page, `${tag} add dialog: no overflow`);
+      const radios = page.locator('[data-testid="share-picker"] [role="radio"]');
+      ok(`${tag} share picker has 3 options`, (await radios.count()) === 3);
+      await radios.nth(2).click(); await page.waitForTimeout(250);
+      ok(`${tag} share picker lists people`, (await page.locator('[data-testid="share-picker"] input[type="checkbox"]').count()) >= 2);
+      await noOverflow(page, `${tag} share picker (people list): no overflow`);
+      const radioFit = await page.evaluate(() => [...document.querySelectorAll('[data-testid="share-picker"] [role="radio"]')].every((e) => { const l = e.querySelector("[data-label]"); return e.scrollWidth <= e.clientWidth + 1 && l.scrollWidth <= l.clientWidth + 1 && l.scrollHeight <= l.clientHeight + 1 && e.getBoundingClientRect().height <= 64; }));
+      ok(`${tag} share option labels fully visible`, radioFit);
+      if (label.includes("320") && ["de", "ar"].includes(lang)) await page.screenshot({ path: `${OUT}/share-picker-320-${lang}.png` });
       const dlgTop = await page.evaluate(() => document.querySelector("dialog[open]").getBoundingClientRect().top);
       ok(`${tag} dialog below status bar`, dlgTop >= (ctxOpts.isMobile ? 59 : 0), String(dlgTop));
       await page.keyboard.press("Escape"); await page.waitForTimeout(200);
       for (const route of ["settings", "admin"]) { await page.goto(URL + "#/" + route); await page.waitForTimeout(900); await noOverflow(page, `${tag} ${route}: no overflow`); }
+      ok(`${tag} admin: privacy card with 3 switches`, (await page.locator('#privacy [role="switch"]').count()) === 3);
+      if (label.includes("320") && lang === "de") { await page.locator("#privacy").scrollIntoViewIfNeeded(); await page.screenshot({ path: `${OUT}/admin-privacy-320-de.png` }); }
       await page.goto(URL + "#/settings"); await page.waitForTimeout(700);
       const fileInput = page.locator('input[type="file"][accept*=".html"]');
       if (await fileInput.count()) {
@@ -197,6 +221,7 @@ await overflowRun(chromium, { ...devices["Pixel 7"], viewport: { width: 412, hei
   const external = []; page.on("request", (r) => { const u = new globalThis.URL(r.url()); if (u.origin !== new globalThis.URL(URL).origin && !u.protocol.startsWith("data")) external.push(r.url()); });
   await page.goto(URL); await page.waitForSelector(".toolbar"); await page.waitForTimeout(600); await page.screenshot({ path: `${OUT}/desktop-light.png` });
   await noOverflow(page, "desktop 1440: no overflow");
+  ok("shared-with-people icon has names", await page.evaluate(() => [...document.querySelectorAll("[title]")].some((e) => /anna/.test(e.getAttribute("title") || ""))));
   await page.keyboard.press("Control+k"); await page.waitForTimeout(300);
   ok("Ctrl+K opens palette", await page.locator("dialog[open]").count() > 0); await page.keyboard.press("Escape");
   await page.goto(URL + "#/settings"); await page.waitForTimeout(600); await page.goto(URL + "#/admin"); await page.waitForTimeout(800);

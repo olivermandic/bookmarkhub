@@ -294,7 +294,7 @@ test('base path: index gets <base href>, sw.js gets version, API under prefix', 
   const idx = await (await fetch(`${base}/bm/some/route`)).text();
   assert.match(idx, /<base href="\/bm\/" \/>/);
   const sw = await (await fetch(`${base}/bm/sw.js`)).text();
-  assert.match(sw, /const V='2\.1\.\d+-/);
+  assert.match(sw, new RegExp("const V='" + require('../package.json').version.replace(/\./g, '\\.') + '-'));
   assert.strictEqual((await fetch(`${base}/bm/api/me`)).status, 401);
   await stop();
   await startServer();

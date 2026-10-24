@@ -11,6 +11,8 @@ const favicons = require('./favicons');
 const linkcheck = require('./linkcheck');
 const backups = require('./backup');
 const totp = require('./totp');
+const settings = require('./settings');
+const updatecheck = require('./updatecheck');
 const QRCode = require('qrcode');
 const pkg = require('./package.json');
 
@@ -87,6 +89,12 @@ function cleanBookmarkInput(input, partial) {
     out.tags = (Array.isArray(input.tags) ? input.tags : []).map((t) => str(t, 50)).filter(Boolean).slice(0, 30);
   } else if (!partial) out.tags = [];
   if (!partial || 'isShared' in input) out.isShared = !!input.isShared;
+  if ('sharedWith' in input) {
+    // Share with chosen users only (ids of existing users). Empty list + isShared = everyone.
+    const ids = new Set(store.getUsers().map((u) => u.id));
+    out.sharedWith = [...new Set((Array.isArray(input.sharedWith) ? input.sharedWith : []).map(String))].filter((id) => ids.has(id)).slice(0, 200);
+    if (Array.isArray(input.sharedWith) && input.sharedWith.length && !out.sharedWith.length) err('Unknown users');
+  } else if (!partial) out.sharedWith = [];
   if ('favicon' in input) {
     const f = str(input.favicon, 2000);
     // Either an http(s) URL or a short fallback text (emoji/letter).
@@ -295,6 +303,23 @@ api.post('/me/2fa/recovery-codes', requireAuth, (req, res) => {
   res.json({ recoveryCodes: codes });
 });
 
+// ---- people directory (names only, for "share with") ----
+api.get('/users/directory', requireAuth, (req, res) => res.json(store.getUsers().map((u) => ({ id: u.id, username: u.username }))));
+
+// ---- instance settings ----
+api.get('/config', requireAuth, (req, res) => {
+  const s = settings.get();
+  res.json({ version: pkg.version, fetchFavicons: s.fetchFavicons, linkCheck: s.linkCheck, ...(req.user.isAdmin ? { updateCheck: s.updateCheck, update: updatecheck.notice(pkg.version) } : {}) });
+});
+api.get('/admin/settings', requireAdmin, (req, res) => res.json({ ...settings.get(), updateState: settings.getState('update') }));
+api.put('/admin/settings', requireAdmin, async (req, res) => {
+  const before = settings.get();
+  const s = settings.set(req.body || {});
+  for (const k of settings.KEYS) if (before[k] !== s[k]) log(`setting ${k} = ${s[k]} by admin "${req.user.username}"`);
+  if (!before.updateCheck && s.updateCheck) await updatecheck.check({ log }).catch(() => {}); // first check (still max. once per 24 h, 10 s timeout)
+  res.json({ ...s, updateState: settings.getState('update') });
+});
+
 // ---- users (admin) ----
 api.get('/users', requireAdmin, (req, res) => {
   const counts = {};
@@ -351,11 +376,24 @@ api.delete('/users/:id', requireAdmin, (req, res) => {
   if (u.id === req.user.id) return res.status(400).json({ error: 'You cannot delete yourself' });
   if (u.isAdmin && users.filter((x) => x.isAdmin).length === 1) return res.status(400).json({ error: 'The last admin cannot be deleted' });
   store.saveUsers(users.filter((x) => x.id !== u.id));
+  store.updateBookmarks((list) => list.forEach((b) => {
+    if (Array.isArray(b.sharedWith) && b.sharedWith.includes(u.id)) {
+      b.sharedWith = b.sharedWith.filter((id) => id !== u.id);
+      if (!b.sharedWith.length) b.isShared = false; // was meant for chosen people only -> private, never "everyone"
+    }
+  }));
   res.json({ success: true });
 });
 
 // ---- bookmarks ----
-const visible = (b, user) => b.isShared || b.createdBy === user.id;
+// private: only the owner | shared + empty list: everyone | shared + list: owner and the listed users
+const audience = (b) => (b.isShared && Array.isArray(b.sharedWith) && b.sharedWith.length ? b.sharedWith : null);
+const visible = (b, user) => b.createdBy === user.id || (b.isShared && (!audience(b) || audience(b).includes(user.id)));
+function normalizeSharing(b) {
+  if (!b.isShared) b.sharedWith = [];
+  else b.sharedWith = (b.sharedWith || []).filter((id) => id !== b.createdBy);
+  return b;
+}
 const canEdit = (b, user) => b.createdBy === user.id || user.isAdmin;
 
 api.get('/bookmarks', requireAuth, (req, res) => {
@@ -365,12 +403,13 @@ api.post('/bookmarks', requireAuth, (req, res, next) => {
   try {
     const data = cleanBookmarkInput((req.body && req.body.bookmark) || {}, false);
     const now = new Date().toISOString();
-    const bm = { ...data, id: `bookmark-${crypto.randomUUID()}`, createdBy: req.user.id, createdAt: now, updatedAt: now };
+    const bm = normalizeSharing({ ...data, id: `bookmark-${crypto.randomUUID()}`, createdBy: req.user.id, createdAt: now, updatedAt: now });
+    if (data.isShared && 'sharedWith' in ((req.body && req.body.bookmark) || {}) && ((req.body.bookmark.sharedWith || []).length) && !bm.sharedWith.length) bm.isShared = false;
     const list = store.getBookmarks();
     list.push(bm);
     store.saveBookmarks(list);
     res.status(201).json(bm);
-    if (BACKGROUND) favicons.refresh(bm, store.DATA_DIR, { log }).then((m) => setIconStatus(bm.id, m)).catch(() => {});
+    if (BACKGROUND && settings.get().fetchFavicons) favicons.refresh(bm, store.DATA_DIR, { log }).then((m) => setIconStatus(bm.id, m)).catch(() => {});
   } catch (e) { next(e); }
 });
 api.put('/bookmarks/:id', requireAuth, (req, res, next) => {
@@ -380,11 +419,17 @@ api.put('/bookmarks/:id', requireAuth, (req, res, next) => {
     if (!b || !visible(b, req.user)) return res.status(404).json({ error: 'Bookmark not found' });
     if (!canEdit(b, req.user)) return res.status(403).json({ error: 'Not allowed' });
     const before = { url: b.url, iconUrl: b.iconUrl || '' };
-    Object.assign(b, cleanBookmarkInput((req.body && req.body.updates) || {}, true), { updatedAt: new Date().toISOString() });
+    const upd = cleanBookmarkInput((req.body && req.body.updates) || {}, true);
+    const hadAudience = !!audience(b);
+    Object.assign(b, upd, { updatedAt: new Date().toISOString() });
+    normalizeSharing(b);
+    // a list that ends up empty (only the owner was picked) must not silently become "everyone"
+    if (b.isShared && 'sharedWith' in upd && Array.isArray(req.body.updates.sharedWith) && req.body.updates.sharedWith.length && !b.sharedWith.length) b.isShared = false;
+    else if (b.isShared && hadAudience && !('sharedWith' in upd) && !b.sharedWith.length) b.isShared = false;
     if (b.url !== before.url) delete b.linkStatus;
     store.saveBookmarks(list);
     res.json(b);
-    if (BACKGROUND && (b.url !== before.url || (b.iconUrl || '') !== before.iconUrl)) favicons.refresh(b, store.DATA_DIR, { force: true, log }).then((m) => setIconStatus(b.id, m)).catch(() => {});
+    if (BACKGROUND && settings.get().fetchFavicons && (b.url !== before.url || (b.iconUrl || '') !== before.iconUrl)) favicons.refresh(b, store.DATA_DIR, { force: true, log }).then((m) => setIconStatus(b.id, m)).catch(() => {});
   } catch (e) { next(e); }
 });
 api.delete('/bookmarks/:id', requireAuth, (req, res) => {
@@ -447,7 +492,7 @@ api.get('/favicon/:id', requireAuth, async (req, res) => {
   const b = store.getBookmarks().find((x) => x.id === req.params.id);
   if (!b || !visible(b, req.user)) return res.status(404).end();
   let cached = favicons.readCache(store.DATA_DIR, b.id);
-  if (!cached || cached.meta.pageUrl !== (b.iconUrl || b.url) || (!cached.meta.upload && Date.now() - cached.meta.fetchedAt > (cached.meta.type ? 30 : 3) * 864e5)) {
+  if (settings.get().fetchFavicons && (!cached || cached.meta.pageUrl !== (b.iconUrl || b.url) || (!cached.meta.upload && Date.now() - cached.meta.fetchedAt > (cached.meta.type ? 30 : 3) * 864e5))) {
     const meta = await favicons.refresh(b, store.DATA_DIR, { log });
     if (b.iconStatus !== meta.status) setIconStatus(b.id, meta);
     cached = favicons.readCache(store.DATA_DIR, b.id);
@@ -463,9 +508,12 @@ api.get('/favicon/:id', requireAuth, async (req, res) => {
   if (meta.type === 'image/svg+xml') res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
   res.end(cached.data);
 });
+const fetchOff = (res) => res.status(409).json({ error: 'Loading icons from websites is switched off by the admin', code: 'fetch_disabled' });
+const linkOff = (res) => res.status(409).json({ error: 'The link check is switched off by the admin', code: 'linkcheck_disabled' });
 api.post('/bookmarks/:id/favicon/refresh', requireAuth, async (req, res) => {
   const b = store.getBookmarks().find((x) => x.id === req.params.id);
   if (!b || !visible(b, req.user)) return res.status(404).json({ error: 'Bookmark not found' });
+  if (!settings.get().fetchFavicons) return fetchOff(res);
   const meta = await favicons.refresh(b, store.DATA_DIR, { force: true, log });
   setIconStatus(b.id, meta);
   res.json({ status: meta.status, iconVersion: meta.etag ? meta.etag.replace(/"/g, '').slice(0, 8) : null, source: meta.source });
@@ -488,6 +536,7 @@ api.delete('/bookmarks/:id/favicon', requireAuth, async (req, res) => {
   if (!canEdit(b, req.user)) return res.status(403).json({ error: 'Not allowed' });
   favicons.removeCache(store.DATA_DIR, b.id);
   store.updateBookmarks((list) => { const x = list.find((y) => y.id === b.id); if (x) x.iconUrl = ''; });
+  if (!settings.get().fetchFavicons) { setIconStatus(b.id, { status: 'fallback', etag: null }); return res.json({ status: 'fallback', iconVersion: null }); }
   const meta = await favicons.refresh({ ...b, iconUrl: '' }, store.DATA_DIR, { force: true, log });
   setIconStatus(b.id, meta);
   res.json({ status: meta.status, iconVersion: meta.etag ? meta.etag.replace(/"/g, '').slice(0, 8) : null });
@@ -504,6 +553,7 @@ async function checkBookmark(id) {
 api.post('/bookmarks/:id/check', requireAuth, async (req, res) => {
   const b = store.getBookmarks().find((x) => x.id === req.params.id);
   if (!b || !visible(b, req.user)) return res.status(404).json({ error: 'Bookmark not found' });
+  if (!settings.get().linkCheck) return linkOff(res);
   res.json(await checkBookmark(b.id));
 });
 
@@ -528,9 +578,11 @@ const faviconWorker = async (id) => {
 };
 api.get('/jobs', requireAuth, (req, res) => res.json(jobs));
 api.post('/admin/favicons/refresh-all', requireAdmin, (req, res) => {
+  if (!settings.get().fetchFavicons) return fetchOff(res);
   res.status(202).json(startJob('favicons', store.getBookmarks().map((b) => b.id), faviconWorker, 4));
 });
 api.post('/admin/links/check-all', requireAdmin, (req, res) => {
+  if (!settings.get().linkCheck) return linkOff(res);
   res.status(202).json(startJob('links', store.getBookmarks().map((b) => b.id), checkBookmark, linkcheck.CONCURRENCY));
 });
 
@@ -588,7 +640,7 @@ api.get('/export', requireAuth, (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename="bookmarkhub-export-${new Date().toISOString().slice(0, 10)}.json"`);
   res.json({
     app: 'BookmarkHub', exportedAt: new Date().toISOString(), version: pkg.version, categories: cats,
-    bookmarks: list.map(({ linkStatus, iconStatus, iconVersion, ...b }) => ({ ...b, category: (cats.find((c) => c.id === b.categoryId) || {}).name || '' })),
+    bookmarks: list.map(({ linkStatus, iconStatus, iconVersion, sharedWith, ...b }) => ({ ...b, category: (cats.find((c) => c.id === b.categoryId) || {}).name || '' })),
   });
 });
 
@@ -633,9 +685,11 @@ app.use(BASE_PATH, site);
 // ---------- background work: daily backup, weekly link check ----------
 function startBackground() {
   backups.start(log);
-  if (process.env.LINKCHECK_DISABLED !== 'true') {
+  updatecheck.start(log);
+  {
+    // runs always; the admin setting (default from LINKCHECK_DISABLED) is checked on every run
     const run = () => {
-      if (jobs.links && jobs.links.running) return;
+      if (!settings.get().linkCheck || (jobs.links && jobs.links.running)) return;
       const dueIds = store.getBookmarks().filter((b) => linkcheck.due(b)).slice(0, 40).map((b) => b.id);
       if (dueIds.length) startJob('links', dueIds, checkBookmark, linkcheck.CONCURRENCY);
     };

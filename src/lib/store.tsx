@@ -1,9 +1,10 @@
 // App state: session user, bookmarks, categories. One refresh() reloads everything (pull-to-refresh).
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api, type Bookmark, type Category, type Prefs, type User } from "./api";
+import { api, type AppConfig, type Bookmark, type Category, type Person, type Prefs, type User } from "./api";
 
 interface Store {
-  user: User | null; loading: boolean; bookmarks: Bookmark[]; categories: Category[];
+  user: User | null; loading: boolean; bookmarks: Bookmark[]; categories: Category[]; config: AppConfig | null; people: Person[];
+  reloadConfig: () => Promise<void>;
   setUser: (u: User | null) => void; refresh: () => Promise<void>; logout: () => Promise<void>;
   savePrefs: (p: Partial<Prefs>) => Promise<void>;
   upsertBookmark: (b: Bookmark) => void; removeBookmark: (id: string) => void; patchBookmark: (id: string, p: Partial<Bookmark>) => void;
@@ -16,11 +17,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [config, setConfig] = useState<AppConfig | null>(null);
+  const [people, setPeople] = useState<Person[]>([]);
   const userRef = useRef(user); userRef.current = user;
 
   const loadData = useCallback(async () => {
-    const [b, c] = await Promise.all([api<Bookmark[]>("/bookmarks"), api<Category[]>("/categories")]);
-    setBookmarks(b); setCategories(c);
+    const [b, c, cfg, ppl] = await Promise.all([api<Bookmark[]>("/bookmarks"), api<Category[]>("/categories"), api<AppConfig>("/config").catch(() => null), api<Person[]>("/users/directory").catch(() => [])]);
+    setBookmarks(b); setCategories(c); if (cfg) setConfig(cfg); setPeople(ppl);
   }, []);
   const refresh = useCallback(async () => {
     try {
@@ -47,6 +50,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => document.removeEventListener("visibilitychange", h);
   }, [refresh]);
 
+  const reloadConfig = useCallback(async () => { const [cfg, ppl] = await Promise.all([api<AppConfig>("/config"), api<Person[]>("/users/directory")]); setConfig(cfg); setPeople(ppl); }, []);
   const logout = useCallback(async () => { try { await api("/logout", { method: "POST" }); } finally { setUser(null); setBookmarks([]); } }, []);
   const savePrefs = useCallback(async (p: Partial<Prefs>) => {
     setUser((u) => (u ? { ...u, prefs: { ...(u.prefs || {}), ...p } } : u)); // optimistic
@@ -57,8 +61,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const removeBookmark = useCallback((id: string) => setBookmarks((l) => l.filter((x) => x.id !== id)), []);
   const patchBookmark = useCallback((id: string, p: Partial<Bookmark>) => setBookmarks((l) => l.map((x) => (x.id === id ? { ...x, ...p } : x))), []);
 
-  const value = useMemo(() => ({ user, loading, bookmarks, categories, setUser, refresh, logout, savePrefs, upsertBookmark, removeBookmark, patchBookmark, setCategories }),
-    [user, loading, bookmarks, categories, refresh, logout, savePrefs, upsertBookmark, removeBookmark, patchBookmark]);
+  const value = useMemo(() => ({ user, loading, bookmarks, categories, config, people, reloadConfig, setUser, refresh, logout, savePrefs, upsertBookmark, removeBookmark, patchBookmark, setCategories }),
+    [user, loading, bookmarks, categories, config, people, reloadConfig, refresh, logout, savePrefs, upsertBookmark, removeBookmark, patchBookmark]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 export const useStore = () => useContext(Ctx);

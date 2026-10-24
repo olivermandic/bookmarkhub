@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { UpdateBanner } from "./Admin";
 import {
   DndContext, DragOverlay, KeyboardSensor, PointerSensor, TouchSensor, closestCenter, useDroppable, useSensor, useSensors,
   type DragEndEvent, type DragStartEvent,
@@ -160,6 +161,7 @@ export function Home({ arrange, onAdd, onEdit, onAddCategory }: { arrange: boole
 
   return (
     <div className="mx-auto max-w-7xl px-3 sm:px-6 py-4 sm:py-6">
+      <UpdateBanner />
       {!showEmpty && (
         <div className="flex flex-col gap-3 mb-5">
           <div className="flex items-center gap-2">

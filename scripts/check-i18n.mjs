@@ -14,7 +14,7 @@ const err = (l, k, m) => errors.push(`${l} ${k}: ${m}`);
 const ph = (s) => (s.match(/\{\w+\}/g) || []).sort().join(",");
 const nums = (s) => (s.match(/\d+/g) || []).sort().join(",");
 // brand / technical words allowed to stay identical or in Latin script
-const ALLOWED = /\b(?:BookmarkHub|URL|JSON|HTML|KB|QR|Chrome|Edge|Firefox|Safari|Aegis|2FAS|Google Authenticator|iPhone|Ctrl|Esc|Enter|OK)\b|A–Z/g;
+const ALLOWED = /\b(?:BookmarkHub|URL|JSON|HTML|KB|QR|Chrome|Edge|Firefox|Safari|Aegis|2FAS|Google Authenticator|GitHub|iPhone|Ctrl|Esc|Enter|OK)\b|A–Z/g;
 const HALLUCINATION = [/\b(regulation|directive|pursuant|hereby|article \d+|GDPR|EU)\b/i, /(\b\w{3,}\b)(\s+\1){2,}/i, /https?:\/\//, /<\/?[a-z]+>/i, /\?\?|�|\\n/];
 
 for (const l of LOCALES) {

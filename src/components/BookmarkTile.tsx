@@ -1,10 +1,11 @@
 import { memo } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, MoreHorizontal, Pencil, Trash2, RefreshCw, Link2Off, Users, Lock, Activity } from "lucide-react";
+import { GripVertical, MoreHorizontal, Pencil, Trash2, RefreshCw, Link2Off, Users, UserCheck, Lock, Activity } from "lucide-react";
 import type { Bookmark } from "@/lib/api";
 import { hostOf } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+import { useStore } from "@/lib/store";
 import { Favicon } from "./Favicon";
 import { Menu, MenuItem } from "./ui";
 
@@ -13,6 +14,9 @@ export interface TileActions { edit: (b: Bookmark) => void; remove: (b: Bookmark
 
 export const BookmarkTile = memo(function BookmarkTile({ b, view, arrange, canEdit, actions, overlay }: { b: Bookmark; view: View; arrange: boolean; canEdit: boolean; actions: TileActions; overlay?: boolean }) {
   const { t } = useI18n();
+  const { config, people } = useStore();
+  const fetchOn = config?.fetchFavicons !== false; const linkOn = config?.linkCheck !== false;
+  const sharedNames = b.isShared && b.sharedWith?.length ? b.sharedWith.map((id) => people.find((p) => p.id === id)?.username).filter(Boolean).join(", ") : "";
   const sortable = useSortable({ id: b.id, disabled: !arrange, data: { type: "bookmark", categoryId: b.categoryId || "none" } });
   const style = overlay ? undefined : { transform: CSS.Translate.toString(sortable.transform), transition: sortable.transition, opacity: sortable.isDragging ? 0.35 : 1 };
   const broken = b.linkStatus?.state === "broken";
@@ -27,8 +31,8 @@ export const BookmarkTile = memo(function BookmarkTile({ b, view, arrange, canEd
       <Menu label={t("bookmark.actions", { title: b.title })} trigger={<MoreHorizontal size={18} />}>
         {(close) => (<>
           {canEdit && <MenuItem icon={<Pencil size={16} />} onClick={() => { close(); actions.edit(b); }}>{t("common.edit")}</MenuItem>}
-          <MenuItem icon={<RefreshCw size={16} />} onClick={() => { close(); actions.refreshIcon(b); }}>{t("bookmark.reloadIcon")}</MenuItem>
-          <MenuItem icon={<Activity size={16} />} onClick={() => { close(); actions.check(b); }}>{t("bookmark.checkLink")}</MenuItem>
+          {fetchOn && <MenuItem icon={<RefreshCw size={16} />} onClick={() => { close(); actions.refreshIcon(b); }}>{t("bookmark.reloadIcon")}</MenuItem>}
+          {linkOn && <MenuItem icon={<Activity size={16} />} onClick={() => { close(); actions.check(b); }}>{t("bookmark.checkLink")}</MenuItem>}
           {canEdit && <MenuItem danger icon={<Trash2 size={16} />} onClick={() => { close(); actions.remove(b); }}>{t("common.delete")}</MenuItem>}
         </>)}
       </Menu>
@@ -37,7 +41,7 @@ export const BookmarkTile = memo(function BookmarkTile({ b, view, arrange, canEd
   const badges = (
     <span className="inline-flex items-center gap-1.5 text-muted">
       {broken && <span className="inline-flex items-center gap-1 text-danger text-xs font-medium" title={t("bookmark.brokenHint", { code: b.linkStatus?.code || b.linkStatus?.error || "?" })}><Link2Off size={13} />{t("bookmark.broken")}</span>}
-      {b.isShared ? <Users size={13} aria-label={t("bookmark.shared")} /> : <Lock size={13} aria-label={t("bookmark.private")} />}
+      {!b.isShared ? <Lock size={13} aria-label={t("bookmark.private")} /> : b.sharedWith?.length ? <span className="inline-flex" title={t("share.with", { names: sharedNames })}><UserCheck size={13} aria-label={t("share.with", { names: sharedNames })} /></span> : <Users size={13} aria-label={t("bookmark.shared")} />}
     </span>
   );
   const linkProps = arrange ? { onClick: (e: React.MouseEvent) => e.preventDefault(), tabIndex: -1, "aria-disabled": true } : {};
