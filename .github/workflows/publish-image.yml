@@ -45,7 +45,7 @@ jobs:
       - name: Server tests
         run: |
           cd server && npm ci --no-audit --no-fund && cd ..
-          node --test server/test/
+          node --test server/test/*.test.js
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3

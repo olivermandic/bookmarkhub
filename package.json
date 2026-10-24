@@ -9,7 +9,7 @@
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "start": "node server/server.js",
-    "test": "node --test server/test/",
+    "test": "node --test server/test/*.test.js",
     "check:i18n": "node scripts/check-i18n.mjs"
   },
   "dependencies": {
